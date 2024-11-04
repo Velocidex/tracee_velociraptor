@@ -1,22 +1,17 @@
 package ebpf
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
+	"time"
 	"unsafe"
 
-	"github.com/Velocidex/tracee_velociraptor/userspace/bufferdecoder"
+	"github.com/Velocidex/ordereddict"
 	"github.com/Velocidex/tracee_velociraptor/userspace/compat/bpf"
-	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/probes"
-	"github.com/Velocidex/tracee_velociraptor/userspace/time"
-	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
-	"github.com/Velocidex/tracee_velociraptor/userspace/utils"
+	time_util "github.com/Velocidex/tracee_velociraptor/userspace/time"
 	"github.com/Velocidex/tracee_velociraptor/userspace/utils/environment"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/perf"
@@ -48,6 +43,8 @@ type EBPFManager struct {
 	bpfModule *bpf.Module
 
 	kernelSymbols *environment.KernelSymbolTable
+
+	logger Logger
 }
 
 func (self *EBPFManager) getRequiredKsyms() (res []string) {
@@ -69,7 +66,7 @@ func (self *EBPFManager) getRequiredKsyms() (res []string) {
 		res = append(res, k)
 	}
 
-	fmt.Printf("Required KSyms %v\n", res)
+	self.logger.Debug("Required KSyms %v\n", res)
 	return res
 }
 
@@ -92,7 +89,7 @@ func (self *EBPFManager) getProbeHandles() (res []probes.Handle) {
 		res = append(res, k)
 	}
 
-	fmt.Printf("Monitoring Handles %v\n", res)
+	self.logger.Debug("Monitoring Handles %v\n", res)
 	return res
 }
 
@@ -118,10 +115,6 @@ func (self *EBPFManager) setTailCalls(eid events.ID, remove bool) error {
 			if remove {
 				prog_array_tp_map.Delete(unsafe.Pointer(&idx))
 			} else {
-				fmt.Printf("setTailCalls: Set %v to %v in %v\n",
-					tailCall.GetMapName(),
-					tailCall.GetProgName(),
-					idx)
 				prog_array_tp_map.Put(unsafe.Pointer(&idx),
 					unsafe.Pointer(&tail_prog_fd))
 			}
@@ -163,7 +156,6 @@ func (self *EBPFManager) setEventIDPolicy() error {
 	}
 
 	for key := range self.eid_monitored {
-		fmt.Printf("Monitoring EID %v\n", key)
 		eid := key
 		err = event_inner_map.Put(unsafe.Pointer(&eid),
 			unsafe.Pointer(event_config))
@@ -185,18 +177,18 @@ func (self *EBPFManager) setEventIDPolicy() error {
 
 func (self *EBPFManager) Close() {
 	if self.collection != nil {
+		self.logger.Debug("Unloading EBPF program")
 		self.collection.Close()
 	}
 }
 
-func (self *EBPFManager) Watch(ctx context.Context) error {
+func (self *EBPFManager) Watch(ctx context.Context) (
+	chan *ordereddict.Dict, error) {
 
 	err := self.populateBPFMaps()
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	defer self.probes.DetachAll()
 
 	kernelSymbols, err := environment.NewKernelSymbolTable(
 		environment.WithRequiredSymbols(self.getRequiredKsyms()),
@@ -205,55 +197,61 @@ func (self *EBPFManager) Watch(ctx context.Context) error {
 	for _, handle := range self.getProbeHandles() {
 		err := self.probes.Attach(handle, kernelSymbols)
 		if err != nil {
-			fmt.Printf("Error attaching %v: %v\n", handle, err)
+			// Not a fatal error, keep attaching to other events.
+			self.logger.Warn("Error attaching to handle %v: %v", handle, err)
 			continue
 		}
 	}
 
 	rd, err := perf.NewReader(self.collection.Maps["events"], 32*4096)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer rd.Close()
 
-	fmt.Printf("Reading events\n")
+	self.logger.Debug("Reading events")
 
-	for {
-		record, err := rd.Read()
-		if err != nil {
-			if errors.Is(err, ringbuf.ErrClosed) {
-				return err
+	output_chan := make(chan *ordereddict.Dict)
+
+	go func() {
+		defer self.probes.DetachAll()
+		defer rd.Close()
+		defer close(output_chan)
+
+		for {
+			record, err := rd.Read()
+			if err != nil {
+				if errors.Is(err, ringbuf.ErrClosed) {
+					return
+				}
+				continue
 			}
-			continue
+
+			event, err := decodeEvent(record.RawSample)
+			if err != nil {
+				continue
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+
+			case output_chan <- event:
+			}
 		}
+	}()
 
-		event, err := decodeEvent(record.RawSample)
-		if err != nil {
-			continue
-		}
-
-		serialized, err := json.Marshal(event)
-		if err != nil {
-			continue
-		}
-
-		fmt.Println(string(serialized))
-		//fmt.Println(hex.Dump(record.RawSample))
-	}
-
-	return nil
+	return output_chan, nil
 }
 
-func NewEBPFManager() (*EBPFManager, error) {
+func NewEBPFManager(logger Logger) (*EBPFManager, error) {
 	self := &EBPFManager{
 		policy_id:     1,
 		eid_monitored: make(map[events.ID]bool),
+		logger:        logger,
 	}
 
 	// Set the clocks and initialize.
-	time.Init(unix.CLOCK_BOOTTIME)
-
-	fmt.Printf("Starting\n")
+	time_util.Init(unix.CLOCK_BOOTTIME)
 
 	// Allow the current process to lock memory for eBPF resources.
 	err := rlimit.RemoveMemlock()
@@ -261,16 +259,20 @@ func NewEBPFManager() (*EBPFManager, error) {
 		return nil, err
 	}
 
+	start := time.Now()
+	logger.Debug("Loading EBPF program into kernel")
 	self.spec, err = loadEbpf()
 	if err != nil {
 		return nil, err
 	}
 
-	self.collection, err = ebpf.NewCollectionWithOptions(self.spec,
-		ebpf.CollectionOptions{})
+	self.collection, err = ebpf.NewCollectionWithOptions(
+		self.spec, ebpf.CollectionOptions{})
 	if err != nil {
 		return nil, err
 	}
+
+	logger.Debug("Load done in %v", time.Now().Sub(start))
 
 	self.bpfModule = bpf.NewModule(self.collection)
 
@@ -278,7 +280,7 @@ func NewEBPFManager() (*EBPFManager, error) {
 	cmap := self.collection.Maps["config_map"]
 	config_obj := ebpfConfigEntryT{
 		TraceePid: uint32(os.Getpid()),
-		Options:   optTranslateFDFilePath | optExecEnv, // | optForkProcTree,
+		Options:   optTranslateFDFilePath | optExecEnv,
 	}
 
 	// Install a noop policy to get all events.
@@ -298,117 +300,4 @@ func NewEBPFManager() (*EBPFManager, error) {
 	}
 
 	return self, nil
-}
-
-func decodeEvent(dataRaw []byte) (*trace.Event, error) {
-	ebpfMsgDecoder := bufferdecoder.New(dataRaw)
-	var eCtx bufferdecoder.EventContext
-
-	err := ebpfMsgDecoder.DecodeContext(&eCtx)
-	if err != nil {
-		return nil, err
-	}
-
-	var argnum uint8
-	err = ebpfMsgDecoder.DecodeUint8(&argnum)
-	if err != nil {
-		return nil, err
-	}
-
-	eventId := events.ID(eCtx.EventID)
-	if !events.Core.IsDefined(eventId) {
-		return nil, errfmt.Errorf("failed to get configuration of event %d", eventId)
-	}
-	eventDefinition := events.Core.GetDefinitionByID(eventId)
-	evtParams := eventDefinition.GetParams()
-	evtName := eventDefinition.GetName()
-	args := make([]trace.Argument, len(evtParams))
-	err = ebpfMsgDecoder.DecodeArguments(args, int(argnum), evtParams, evtName, eventId)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add stack trace if needed
-	var stackAddresses []uint64
-	//	if t.config.Output.StackAddresses {
-	//	stackAddresses = t.getStackAddresses(eCtx.StackID)
-	// }
-	/*
-			containerInfo := t.containers.GetCgroupInfo(eCtx.CgroupID).Container
-			containerData := trace.Container{
-				ID:          containerInfo.ContainerId,
-				ImageName:   containerInfo.Image,
-				ImageDigest: containerInfo.ImageDigest,
-				Name:        containerInfo.Name,
-			}
-			kubernetesData := trace.Kubernetes{
-				PodName:      containerInfo.Pod.Name,
-				PodNamespace: containerInfo.Pod.Namespace,
-				PodUID:       containerInfo.Pod.UID,
-			}
-
-		flags := parseContextFlags(containerData.ID, eCtx.Flags)
-		syscall := ""
-		if eCtx.Syscall != noSyscall {
-			var err error
-			syscall, err = parseSyscallID(int(eCtx.Syscall), flags.IsCompat, sysCompatTranslation)
-			if err != nil {
-				//logger.Debugw("Originated syscall parsing", "error", err)
-			}
-		}
-
-		// get an event pointer from the pool
-		evt, ok := t.eventsPool.Get().(*trace.Event)
-		if !ok {
-			t.handleError(errfmt.Errorf("failed to get event from pool"))
-			continue
-		}
-	*/
-
-	evt := &trace.Event{}
-
-	// populate all the fields of the event used in this stage, and reset the rest
-
-	// normalize timestamp context fields for later use
-	normalizedTs := time.BootToEpochNS(eCtx.Ts)
-	normalizedThreadStartTime := time.BootToEpochNS(eCtx.StartTime)
-	normalizedLeaderStartTime := time.BootToEpochNS(eCtx.LeaderStartTime)
-	normalizedParentStartTime := time.BootToEpochNS(eCtx.ParentStartTime)
-
-	evt.Timestamp = int(normalizedTs)
-	evt.ThreadStartTime = int(normalizedThreadStartTime)
-	evt.ProcessorID = int(eCtx.ProcessorId)
-	evt.ProcessID = int(eCtx.Pid)
-	evt.ThreadID = int(eCtx.Tid)
-	evt.ParentProcessID = int(eCtx.Ppid)
-	evt.HostProcessID = int(eCtx.HostPid)
-	evt.HostThreadID = int(eCtx.HostTid)
-	evt.HostParentProcessID = int(eCtx.HostPpid)
-	evt.UserID = int(eCtx.Uid)
-	evt.MountNS = int(eCtx.MntID)
-	evt.PIDNS = int(eCtx.PidID)
-	evt.ProcessName = string(bytes.TrimRight(eCtx.Comm[:], "\x00")) // set and clean potential trailing null
-	evt.HostName = string(bytes.TrimRight(eCtx.UtsName[:], "\x00")) // set and clean potential trailing null
-	evt.CgroupID = uint(eCtx.CgroupID)
-	//evt.ContainerID = containerData.ID
-	//evt.Container = containerData
-	//evt.Kubernetes = kubernetesData
-	evt.EventID = int(eCtx.EventID)
-	evt.EventName = evtName
-	evt.PoliciesVersion = eCtx.PoliciesVersion
-	evt.MatchedPoliciesKernel = eCtx.MatchedPolicies
-	evt.MatchedPoliciesUser = 0
-	evt.MatchedPolicies = []string{}
-	evt.ArgsNum = int(argnum)
-	evt.ReturnValue = int(eCtx.Retval)
-	evt.Args = args
-	evt.StackAddresses = stackAddresses
-	//evt.ContextFlags = flags
-	//evt.Syscall = syscall
-	evt.Metadata = nil
-	evt.ThreadEntityId = utils.HashTaskID(eCtx.HostTid, normalizedThreadStartTime)
-	evt.ProcessEntityId = utils.HashTaskID(eCtx.HostPid, normalizedLeaderStartTime)
-	evt.ParentEntityId = utils.HashTaskID(eCtx.HostPpid, normalizedParentStartTime)
-
-	return evt, nil
 }

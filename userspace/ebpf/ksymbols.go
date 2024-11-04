@@ -1,7 +1,6 @@
 package ebpf
 
 import (
-	"fmt"
 	"unsafe"
 
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
@@ -47,8 +46,6 @@ func (self *EBPFManager) UpdateKallsyms() error {
 			key := make([]byte, maxKsymNameLen)
 			copy(key, sym.Name)
 			addr := sym.Address
-
-			fmt.Printf("Updating ksymbol %v %v\n", key[0], addr)
 
 			// Update the eBPF map with the symbol address.
 			err := bpfKsymsMap.Update(

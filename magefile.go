@@ -4,7 +4,9 @@
 package main
 
 import (
+	"io/ioutil"
 	"os"
+	"strings"
 
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
@@ -42,6 +44,15 @@ func (self *Builder) Bin() error {
 }
 
 func (self *Builder) Generate() error {
+	err := self.generate()
+	if err != nil {
+		return err
+	}
+
+	return self.fixAssets()
+}
+
+func (self *Builder) generate() error {
 	closer, err := self.cwd("userspace/ebpf")
 	if err != nil {
 		return err
@@ -55,12 +66,39 @@ func (self *Builder) Generate() error {
 		"-type", "event_config_t",
 		"-no-global-types",
 		"-target", "bpfel",
-		"ebpf", "../../tracee.bpf.c",
-		"--", "-I../../", "-D__TARGET_ARCH_x86", "-DDEBUG_K",
+		"ebpf", "../../c/tracee.bpf.c",
+		"--", "-I../../c/", "-D__TARGET_ARCH_x86", "-DDEBUG_K",
 	)
 }
 
-// Build ebpf files
+func (self *Builder) fixAssets() error {
+	for _, f := range []string{
+		"userspace/ebpf/ebpf_bpfel.go",
+		"userspace/ebpf/ebpf_bpfeb.go",
+	} {
+		replace_string_in_file(f, `//go:embed `, "//")
+		replace_string_in_file(f, `bytes.NewReader(_EbpfBytes)`,
+			`bytes.NewReader(getEbpfBytes())`)
+	}
+
+	err := fileb0x("userspace/ebpf/b0x_bpfel.yaml")
+	if err != nil {
+		return err
+	}
+
+	err = replace_string_in_file("userspace/ebpf/ab0x.go", "func init()", "func Init()")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Build ebpf files.
+//
+// This needs to only be run if the ebpf C code changes! We normally
+// check the compiled EBPF module into the tree, so you do not need to
+// rebuild it.
 func Generate() error {
 	builder := Builder{}
 
@@ -70,4 +108,27 @@ func Generate() error {
 func Bin() error {
 	builder := Builder{}
 	return builder.Bin()
+}
+
+func replace_string_in_file(filename string, old string, new string) error {
+	read, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	newContents := strings.Replace(string(read), old, new, -1)
+	return ioutil.WriteFile(filename, []byte(newContents), 0644)
+}
+
+func fileb0x(asset string) error {
+	err := sh.Run("fileb0x", asset)
+	if err != nil {
+		err = sh.Run(mg.GoCmd(), "install", "github.com/Velocidex/fileb0x@d54f4040016051dd9657ce04d0ae6f31eab99bc6")
+		if err != nil {
+			return err
+		}
+
+		err = sh.Run("fileb0x", asset)
+	}
+
+	return err
 }

@@ -1,0 +1,12 @@
+pkg: ebpf
+
+dest: "userspace/ebpf/"
+fmt: false
+compression:
+  compress: true
+  method: BestCompression
+
+output: "ab0x.go"
+custom:
+  - files:
+      - "userspace/ebpf/ebpf_bpfel.o"
