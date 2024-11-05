@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -182,6 +183,33 @@ func (self *EBPFManager) Close() {
 	}
 }
 
+func (self *EBPFManager) loadEbpf(ctx context.Context) (err error) {
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		start := time.Now()
+		self.logger.Debug("Loading EBPF program into kernel")
+		self.spec, err = loadEbpf()
+		if err != nil {
+			return
+		}
+
+		self.collection, err = ebpf.NewCollectionWithOptions(
+			self.spec, ebpf.CollectionOptions{})
+		if err != nil {
+			return
+		}
+
+		self.logger.Debug("Load done in %v", time.Now().Sub(start))
+	}()
+
+	wg.Wait()
+
+	return err
+}
+
 func (self *EBPFManager) Watch(ctx context.Context) (
 	chan *ordereddict.Dict, error) {
 
@@ -212,9 +240,15 @@ func (self *EBPFManager) Watch(ctx context.Context) (
 
 	output_chan := make(chan *ordereddict.Dict)
 
+	// Close the reader immediately as soon as we are cancelled.
 	go func() {
 		defer self.probes.DetachAll()
 		defer rd.Close()
+
+		<-ctx.Done()
+	}()
+
+	go func() {
 		defer close(output_chan)
 
 		for {
@@ -243,7 +277,8 @@ func (self *EBPFManager) Watch(ctx context.Context) (
 	return output_chan, nil
 }
 
-func NewEBPFManager(logger Logger) (*EBPFManager, error) {
+func NewEBPFManager(
+	ctx context.Context, logger Logger) (*EBPFManager, error) {
 	self := &EBPFManager{
 		policy_id:     1,
 		eid_monitored: make(map[events.ID]bool),
@@ -259,20 +294,10 @@ func NewEBPFManager(logger Logger) (*EBPFManager, error) {
 		return nil, err
 	}
 
-	start := time.Now()
-	logger.Debug("Loading EBPF program into kernel")
-	self.spec, err = loadEbpf()
+	err = self.loadEbpf(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	self.collection, err = ebpf.NewCollectionWithOptions(
-		self.spec, ebpf.CollectionOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	logger.Debug("Load done in %v", time.Now().Sub(start))
 
 	self.bpfModule = bpf.NewModule(self.collection)
 

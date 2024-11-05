@@ -1,51 +1,30 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
+	"os"
 
-	"github.com/Velocidex/tracee_velociraptor/userspace/ebpf"
-	"github.com/Velocidex/tracee_velociraptor/userspace/events"
+	"github.com/alecthomas/kingpin"
+)
+
+type CommandHandler func(command string) bool
+
+var (
+	app = kingpin.New("ebpf_tool", "A tool for dump ebpf events.")
+
+	verbose_flag = app.Flag(
+		"verbose", "Show verbose information").Bool()
+
+	command_handlers []CommandHandler
 )
 
 func main() {
-	ctx, cancel := InstallSignalHandler()
-	defer cancel()
+	app.HelpFlag.Short('h')
+	app.UsageTemplate(kingpin.CompactUsageTemplate)
+	command := kingpin.MustParse(app.Parse(os.Args[1:]))
 
-	logger := NewLogger()
-
-	manager, err := ebpf.NewEBPFManager(logger)
-	if err != nil {
-		fmt.Printf("ebpf_process: %s", err)
-		return
-	}
-
-	defer manager.Close()
-
-	for _, eid := range []events.ID{
-		events.SecuritySocketListen,
-		events.SchedProcessExec,
-		events.HiddenKernelModuleSeeker,
-	} {
-		err = manager.InstallEventIDPolicy(eid)
-		if err != nil {
-			logger.Error("InstallEventIDPolicy: %v", err)
-			return
+	for _, command_handler := range command_handlers {
+		if command_handler(command) {
+			break
 		}
-	}
-
-	output_chan, err := manager.Watch(ctx)
-	if err != nil {
-		logger.Error("Watch: %v", err)
-		return
-	}
-
-	for row := range output_chan {
-		serialized, err := json.Marshal(row)
-		if err != nil {
-			continue
-		}
-
-		fmt.Println(string(serialized))
 	}
 }
