@@ -32,12 +32,16 @@ var (
 )
 
 type EBPFManager struct {
-	spec       *ebpf.CollectionSpec
-	collection *ebpf.Collection
+	mu sync.Mutex
+
+	ctx    context.Context
+	cancel func()
+
+	spec              *ebpf.CollectionSpec
+	collection        *ebpf.Collection
+	currently_loading bool
 
 	policy_id uint16
-
-	eid_monitored map[events.ID]bool
 
 	probes *probes.ProbeGroup
 
@@ -46,11 +50,158 @@ type EBPFManager struct {
 	kernelSymbols *environment.KernelSymbolTable
 
 	logger Logger
+
+	// A list of listeners - we multiplex the event stream to all
+	// listeners.
+	listeners []*listener
+
+	config_obj ebpfConfigEntryT
+
+	// We do not unload the program immediately. Instead we count when
+	// the manager is idle and only unload the ebpf program after some
+	// time. The manager will load the program on demand in the
+	// future.
+	idle_time        time.Time
+	idle_unload_time time.Duration
+}
+
+func (self *EBPFManager) EidMonitored() []events.ID {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	return self._EidMonitored()
+}
+
+func (self *EBPFManager) _EidMonitored() []events.ID {
+
+	eid_monitored := make(map[events.ID]bool)
+	for _, listener := range self.listeners {
+		for _, eid := range listener.GetEIDs() {
+			eid_monitored[eid] = true
+		}
+	}
+
+	res := make([]events.ID, 0, len(eid_monitored))
+	for eid := range eid_monitored {
+		res = append(res, eid)
+	}
+
+	return res
+}
+
+func (self *EBPFManager) Stats() (res Stats) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	if self.currently_loading {
+		res.EBFProgramStatus = "Currently Loading"
+
+	} else if self.collection == nil {
+		res.EBFProgramStatus = "Unloaded"
+
+	} else {
+		res.EBFProgramStatus = "Loaded"
+	}
+
+	res.NumberOfListeners = len(self.listeners)
+	res.IdleTime = time.Now().Sub(self.idle_time)
+	res.IdleUnloadTimeout = self.idle_unload_time
+
+	for _, listener := range self.listeners {
+		eid_monitored := make(map[string]int)
+
+		for _, k := range listener.GetEIDs() {
+			desc, pres := events.CoreEvents[k]
+			if !pres {
+				continue
+			}
+
+			eid_monitored[desc.GetName()] = int(k)
+		}
+		res.EIDMonitored = append(res.EIDMonitored, eid_monitored)
+	}
+	return res
+}
+
+// Read all events from the queue and forward to all listeners.
+func (self *EBPFManager) EventLoop(ctx context.Context) {
+	self.mu.Lock()
+	if self.collection == nil {
+		self.mu.Unlock()
+		return
+	}
+
+	rd, err := perf.NewReader(self.collection.Maps["events"], 32*4096)
+	self.mu.Unlock()
+
+	if err != nil {
+		self.logger.Error("EBPFManager.eventLoop: %v", err)
+		return
+	}
+	defer rd.Close()
+
+	// Close the reader as soon as the context is done.
+	go func() {
+		<-ctx.Done()
+
+		rd.Close()
+	}()
+
+	self.logger.Debug("Reading ebpf events")
+
+	for {
+		record, err := rd.Read()
+		if err != nil {
+			if errors.Is(err, ringbuf.ErrClosed) {
+				return
+			}
+			continue
+		}
+
+		self.mu.Lock()
+		listeners := self.listeners
+		self.mu.Unlock()
+
+		// No listeners - dont bother about it.
+		if len(listeners) == 0 {
+			continue
+		}
+
+		event, eid, err := decodeEvent(record.RawSample)
+		if err != nil {
+			continue
+		}
+
+		for _, listener := range listeners {
+			listener.Feed(eid, event)
+		}
+	}
+}
+
+func (self *EBPFManager) startHousekeeping(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			self.UnloadEbpf()
+			return
+
+		case <-time.After(time.Second):
+			self.mu.Lock()
+			is_idle := len(self.listeners) == 0
+
+			if is_idle && time.Now().
+				Add(-self.idle_unload_time).
+				After(self.idle_time) {
+				self.unloadEbpf()
+			}
+			self.mu.Unlock()
+		}
+	}
 }
 
 func (self *EBPFManager) getRequiredKsyms() (res []string) {
 	tmp := make(map[string]bool)
-	for eid := range self.eid_monitored {
+	for _, eid := range self._EidMonitored() {
 		definition, pres := events.CoreEvents[eid]
 		if !pres {
 			continue
@@ -73,7 +224,7 @@ func (self *EBPFManager) getRequiredKsyms() (res []string) {
 
 func (self *EBPFManager) getProbeHandles() (res []probes.Handle) {
 	tmp := make(map[probes.Handle]bool)
-	for eid := range self.eid_monitored {
+	for _, eid := range self._EidMonitored() {
 		definition, pres := events.CoreEvents[eid]
 		if !pres {
 			continue
@@ -94,7 +245,18 @@ func (self *EBPFManager) getProbeHandles() (res []probes.Handle) {
 	return res
 }
 
-func (self *EBPFManager) setTailCalls(eid events.ID, remove bool) error {
+func (self *EBPFManager) setTailCalls() error {
+	for _, eid := range self._EidMonitored() {
+		err := self.setTailCall(eid, tailCallsAdd)
+		if err != nil {
+			return err
+		}
+	}
+
+	return self.setEventIDPolicy()
+}
+
+func (self *EBPFManager) setTailCall(eid events.ID, remove bool) error {
 	definition, pres := events.CoreEvents[eid]
 	if !pres {
 		return eidNotValid
@@ -124,18 +286,6 @@ func (self *EBPFManager) setTailCalls(eid events.ID, remove bool) error {
 	return nil
 }
 
-// Installs an accept all policy for the event id
-func (self *EBPFManager) InstallEventIDPolicy(eid events.ID) error {
-	err := self.setTailCalls(eid, tailCallsAdd)
-	if err != nil {
-		return err
-	}
-
-	self.eid_monitored[eid] = true
-
-	return self.setEventIDPolicy()
-}
-
 func (self *EBPFManager) setEventIDPolicy() error {
 	event_config := &ebpfEventConfigT{
 		SubmitForPolicies: uint64(self.policy_id),
@@ -144,7 +294,7 @@ func (self *EBPFManager) setEventIDPolicy() error {
 	var event_inner_map *ebpf.Map
 
 	// The events_map_version is an inner map - we always renew it
-	// with a new map so we can easily accound for events added and
+	// with a new map so we can easily account for events added and
 	// removed.
 	map_spec, pres := self.spec.Maps["events_map_version"]
 	if !pres {
@@ -156,7 +306,7 @@ func (self *EBPFManager) setEventIDPolicy() error {
 		return err
 	}
 
-	for key := range self.eid_monitored {
+	for _, key := range self._EidMonitored() {
 		eid := key
 		err = event_inner_map.Put(unsafe.Pointer(&eid),
 			unsafe.Pointer(event_config))
@@ -176,46 +326,91 @@ func (self *EBPFManager) setEventIDPolicy() error {
 		unsafe.Pointer(&event_inner_map_fd))
 }
 
-func (self *EBPFManager) Close() {
-	if self.collection != nil {
-		self.logger.Debug("Unloading EBPF program")
-		self.collection.Close()
-	}
-}
+func (self *EBPFManager) Close() {}
 
-func (self *EBPFManager) loadEbpf(ctx context.Context) (err error) {
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		start := time.Now()
-		self.logger.Debug("Loading EBPF program into kernel")
-		self.spec, err = loadEbpf()
-		if err != nil {
-			return
-		}
-
-		self.collection, err = ebpf.NewCollectionWithOptions(
-			self.spec, ebpf.CollectionOptions{})
-		if err != nil {
-			return
-		}
-
-		self.logger.Debug("Load done in %v", time.Now().Sub(start))
-	}()
-
-	wg.Wait()
-
-	return err
-}
-
-func (self *EBPFManager) Watch(ctx context.Context) (
-	chan *ordereddict.Dict, error) {
-
-	err := self.populateBPFMaps()
+func (self *EBPFManager) applyConfig() (err error) {
+	// Open the config map
+	cmap := self.collection.Maps["config_map"]
+	zero := uint64(0)
+	err = cmap.Put(unsafe.Pointer(&zero), unsafe.Pointer(&self.config_obj))
 	if err != nil {
-		return nil, err
+		return err
+	}
+	return nil
+}
+
+func (self *EBPFManager) UnloadEbpf() {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	self.unloadEbpf()
+}
+
+func (self *EBPFManager) unloadEbpf() {
+	if self.collection == nil {
+		return
+	}
+
+	self.logger.Debug("Unloading eBPF program")
+	self.cancel()
+
+	// Close all our listers
+	for _, listener := range self.listeners {
+		listener.Close()
+	}
+
+	self.probes.DetachAll()
+	self.collection.Close()
+	self.collection = nil
+}
+
+func (self *EBPFManager) loadEbpf() (err error) {
+	if self.collection != nil {
+		return nil
+	}
+
+	self.currently_loading = true
+
+	start := time.Now()
+	self.logger.Debug("Loading EBPF program into kernel (This could take a while!)")
+	self.spec, err = loadEbpf()
+	if err != nil {
+		return
+	}
+
+	self.collection, err = ebpf.NewCollectionWithOptions(
+		self.spec, ebpf.CollectionOptions{})
+	if err != nil {
+		return
+	}
+
+	self.logger.Debug("Load done in %v", time.Now().Sub(start))
+
+	self.currently_loading = false
+	self.bpfModule = bpf.NewModule(self.collection)
+	self.probes, err = probes.NewDefaultProbeGroup(
+		self.bpfModule, false)
+	if err != nil {
+		return err
+	}
+
+	return self.updateEbpfState()
+}
+
+func (self *EBPFManager) updateEbpfState() (err error) {
+	err = self.applyConfig()
+	if err != nil {
+		return err
+	}
+
+	err = self.setTailCalls()
+	if err != nil {
+		return err
+	}
+
+	err = self.populateBPFMaps()
+	if err != nil {
+		return err
 	}
 
 	kernelSymbols, err := environment.NewKernelSymbolTable(
@@ -231,58 +426,92 @@ func (self *EBPFManager) Watch(ctx context.Context) (
 		}
 	}
 
-	rd, err := perf.NewReader(self.collection.Maps["events"], 32*4096)
-	if err != nil {
-		return nil, err
+	// Start the main event loop.
+	sub_ctx, cancel := context.WithCancel(self.ctx)
+	self.cancel = cancel
+	go self.EventLoop(sub_ctx)
+
+	return err
+}
+
+func (self *EBPFManager) Watch(
+	ctx context.Context,
+	selected_events []events.ID) (
+	chan *ordereddict.Dict, func(), error) {
+
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	// Add a new listener to the event loop.
+	new_listener := NewListner(ctx, self.ctx, selected_events)
+	self.listeners = append(self.listeners, new_listener)
+
+	// If the program is not already loaded, start it.
+	if self.collection == nil {
+		err := self.loadEbpf()
+		if err != nil {
+			self.listeners = nil
+			return nil, nil, err
+		}
 	}
 
-	self.logger.Debug("Reading events")
+	err := self.updateEbpfState()
+	if err != nil {
+		self.listeners = nil
+		return nil, nil, err
+	}
 
-	output_chan := make(chan *ordereddict.Dict)
+	return new_listener.output_chan,
 
-	// Close the reader immediately as soon as we are cancelled.
-	go func() {
-		defer self.probes.DetachAll()
-		defer rd.Close()
+		// Remove the output chan from the listeners.
+		func() {
+			self.mu.Lock()
+			defer self.mu.Unlock()
 
-		<-ctx.Done()
-	}()
+			new_listener.Close()
 
-	go func() {
-		defer close(output_chan)
+			var new_listeners []*listener
 
-		for {
-			record, err := rd.Read()
-			if err != nil {
-				if errors.Is(err, ringbuf.ErrClosed) {
-					return
+			for _, d := range self.listeners {
+				if d == new_listener {
+					continue
 				}
-				continue
+				new_listeners = append(new_listeners, d)
 			}
 
-			event, err := decodeEvent(record.RawSample)
-			if err != nil {
-				continue
+			self.listeners = new_listeners
+
+			// We are now idle.
+			if len(new_listeners) == 0 {
+				self.idle_time = time.Now()
 			}
-
-			select {
-			case <-ctx.Done():
-				return
-
-			case output_chan <- event:
-			}
-		}
-	}()
-
-	return output_chan, nil
+		}, nil
 }
 
 func NewEBPFManager(
-	ctx context.Context, logger Logger) (*EBPFManager, error) {
+	ctx context.Context,
+	config Config,
+	logger Logger) (*EBPFManager, error) {
+
+	config_obj := ebpfConfigEntryT{
+		TraceePid: uint32(os.Getpid()),
+		Options:   uint32(config.Options),
+	}
+
+	// Install a noop policy to get all events.
+	config_obj.PoliciesVersion = 1
+	config_obj.PoliciesConfig.EnabledScopes = ^uint64(0)
+
 	self := &EBPFManager{
-		policy_id:     1,
-		eid_monitored: make(map[events.ID]bool),
-		logger:        logger,
+		policy_id:        1,
+		logger:           logger,
+		config_obj:       config_obj,
+		idle_unload_time: config.IdleUnloadTimeout,
+		ctx:              ctx,
+	}
+
+	if self.idle_unload_time == 0 {
+		self.idle_unload_time = time.Duration(5 * time.Minute)
 	}
 
 	// Set the clocks and initialize.
@@ -294,35 +523,9 @@ func NewEBPFManager(
 		return nil, err
 	}
 
-	err = self.loadEbpf(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	self.bpfModule = bpf.NewModule(self.collection)
-
-	// Open the config map
-	cmap := self.collection.Maps["config_map"]
-	config_obj := ebpfConfigEntryT{
-		TraceePid: uint32(os.Getpid()),
-		Options:   optTranslateFDFilePath | optExecEnv,
-	}
-
-	// Install a noop policy to get all events.
-	config_obj.PoliciesVersion = 1
-	config_obj.PoliciesConfig.EnabledScopes = ^uint64(0)
-
-	zero := uint64(0)
-	err = cmap.Put(unsafe.Pointer(&zero), unsafe.Pointer(&config_obj))
-	if err != nil {
-		return nil, err
-	}
-
-	self.probes, err = probes.NewDefaultProbeGroup(
-		self.bpfModule, false)
-	if err != nil {
-		return nil, err
-	}
+	// Record the last time we were idle
+	self.idle_time = time.Now()
+	go self.startHousekeeping(ctx)
 
 	return self, nil
 }

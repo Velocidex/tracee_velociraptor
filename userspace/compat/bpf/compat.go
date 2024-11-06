@@ -4,7 +4,6 @@ package bpf
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -69,7 +68,12 @@ type Program struct {
 }
 
 func (self *Program) AttachCgroupLegacy(mount_point string, attach_type BPFAttachType) (*BPFLink, error) {
-	return nil, fmt.Errorf("AttachCgroupLegacy: %w", NotImplementedError)
+	res, err := link.AttachCgroup(link.CgroupOptions{
+		Path:    mount_point,
+		Attach:  ebpf.AttachType(attach_type),
+		Program: self.program,
+	})
+	return &BPFLink{res}, err
 }
 
 func (self *Program) AttachKprobe(mount_point string) (*BPFLink, error) {
@@ -83,11 +87,25 @@ func (self *Program) AttachKretprobe(mount_point string) (*BPFLink, error) {
 }
 
 func (self *Program) AttachTracepoint(class, event string) (*BPFLink, error) {
-	return nil, fmt.Errorf("AttachTracepoint: %w", NotImplementedError)
+	res, err := link.Tracepoint(class, event, self.program, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BPFLink{res}, nil
 }
 
-func (self *Program) AttachUprobe(pid int, path string, offset uint32) (*BPFLink, error) {
-	return nil, fmt.Errorf("AttachUprobe: %w", NotImplementedError)
+func (self *Program) AttachUprobe(pid int, path string, address uint32) (*BPFLink, error) {
+	exe, err := link.OpenExecutable(path)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := exe.Uprobe("", self.program, &link.UprobeOptions{
+		Address: uint64(address),
+		PID:     pid,
+	})
+	return &BPFLink{res}, nil
 }
 
 func (self *Program) AttachRawTracepoint(event string) (*BPFLink, error) {
@@ -103,13 +121,25 @@ func (self *Program) AttachRawTracepoint(event string) (*BPFLink, error) {
 }
 
 func (self *Program) AttachKprobeOffset(address uint64) (*BPFLink, error) {
-	return nil, fmt.Errorf("AttachKprobeOffset: %w", NotImplementedError)
+	res, err := link.Kprobe("", self.program, &link.KprobeOptions{
+		Offset: address,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &BPFLink{res}, nil
 }
 
 func (self *Program) AttachKretprobeOnOffset(address uint64) (*BPFLink, error) {
-	return nil, fmt.Errorf("AttachKretprobeOnOffset: %w", NotImplementedError)
+	res, err := link.Kretprobe("", self.program, &link.KprobeOptions{
+		Offset: address,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &BPFLink{res}, nil
 }
 
 func (self *Program) SetAutoload(autoload bool) error {
-	return NotImplementedError
+	return nil
 }

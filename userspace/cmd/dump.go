@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/Velocidex/tracee_velociraptor/userspace/ebpf"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
@@ -55,26 +56,27 @@ func doDump() {
 		}
 	}
 
-	manager, err := ebpf.NewEBPFManager(ctx, logger)
+	config := ebpf.Config{
+		Options: ebpf.OptTranslateFDFilePath | ebpf.OptExecEnv,
+
+		// This does not matter here because the program exits as soon
+		// as the provider is idle, but in a long living program this
+		// controls when to unload the ebpf program.
+		IdleUnloadTimeout: 5 * time.Second,
+	}
+
+	manager, err := ebpf.NewEBPFManager(ctx, config, logger)
 	if err != nil {
 		kingpin.FatalIfError(err, "NewEBPFManager")
 	}
-
 	defer manager.Close()
 
-	for _, eid := range selected_events {
-		err = manager.InstallEventIDPolicy(eid)
-		if err != nil {
-			logger.Error("InstallEventIDPolicy: %v", err)
-			return
-		}
-	}
-
-	output_chan, err := manager.Watch(ctx)
+	output_chan, closer, err := manager.Watch(ctx, selected_events)
 	if err != nil {
 		logger.Error("Watch: %v", err)
 		return
 	}
+	defer closer()
 
 	for row := range output_chan {
 		serialized, err := json.Marshal(row)

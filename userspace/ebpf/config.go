@@ -1,15 +1,26 @@
 package ebpf
 
+import "time"
+
 // options config should match defined values in ebpf code
+type ConfigOptions uint32
+
 const (
-	optExecEnv uint32 = 1 << iota
-	optCaptureFilesWrite
-	optExtractDynCode
-	optStackAddresses
-	optCaptureModules
-	optCgroupV1
-	optTranslateFDFilePath
-	optCaptureBpf
-	optCaptureFileRead
-	optForkProcTree
+	OptExecEnv ConfigOptions = 1 << iota
+	OptCaptureFilesWrite
+	OptExtractDynCode
+	OptStackAddresses
+	OptCaptureModules
+	OptCgroupV1
+	OptTranslateFDFilePath
+	OptCaptureBpf
+	OptCaptureFileRead
+	OptForkProcTree
 )
+
+type Config struct {
+	Options ConfigOptions
+
+	// How long to wait before unloading an idle program.
+	IdleUnloadTimeout time.Duration
+}

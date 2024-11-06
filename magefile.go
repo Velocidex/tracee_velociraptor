@@ -43,6 +43,13 @@ func (self *Builder) Bin() error {
 	)
 }
 
+func (self *Builder) Race() error {
+	return sh.RunWith(self.Env(), mg.GoCmd(), "build",
+		"-o", "./test", "-race",
+		"./userspace/cmd/",
+	)
+}
+
 func (self *Builder) Generate() error {
 	err := self.generate()
 	if err != nil {
@@ -108,6 +115,11 @@ func Generate() error {
 func Bin() error {
 	builder := Builder{}
 	return builder.Bin()
+}
+
+func Race() error {
+	builder := Builder{}
+	return builder.Race()
 }
 
 func replace_string_in_file(filename string, old string, new string) error {

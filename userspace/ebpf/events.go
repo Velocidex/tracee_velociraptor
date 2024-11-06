@@ -12,24 +12,25 @@ import (
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 
-func decodeEvent(dataRaw []byte) (*ordereddict.Dict, error) {
+func decodeEvent(dataRaw []byte) (*ordereddict.Dict, events.ID, error) {
 	ebpfMsgDecoder := bufferdecoder.New(dataRaw)
 	var eCtx bufferdecoder.EventContext
 
 	err := ebpfMsgDecoder.DecodeContext(&eCtx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var argnum uint8
 	err = ebpfMsgDecoder.DecodeUint8(&argnum)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	eventId := events.ID(eCtx.EventID)
 	if !events.Core.IsDefined(eventId) {
-		return nil, errfmt.Errorf("failed to get configuration of event %d", eventId)
+		return nil, 0, errfmt.Errorf(
+			"failed to get configuration of event %d", eventId)
 	}
 	eventDefinition := events.Core.GetDefinitionByID(eventId)
 	evtParams := eventDefinition.GetParams()
@@ -38,7 +39,7 @@ func decodeEvent(dataRaw []byte) (*ordereddict.Dict, error) {
 	args := make([]trace.Argument, len(evtParams))
 	err = ebpfMsgDecoder.DecodeArguments(args, int(argnum), evtParams, evtName, eventId)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	event_data := ordereddict.NewDict()
@@ -72,5 +73,5 @@ func decodeEvent(dataRaw []byte) (*ordereddict.Dict, error) {
 
 	return ordereddict.NewDict().
 		Set("System", system_part).
-		Set("EventData", event_data), nil
+		Set("EventData", event_data), eCtx.EventID, nil
 }
