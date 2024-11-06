@@ -1,10 +1,5 @@
 package time
 
-/*
-#include <unistd.h>
-*/
-import "C"
-
 import (
 	"os"
 	"strconv"
@@ -32,17 +27,6 @@ func GetSystemHZ() int {
 		},
 	)
 	return configHZ // CONFIG_HZ
-}
-
-// GetUserHZ returns USER_HZ (the user-space timer interrupt), the system clock tick rate.
-func GetUserHZ() int64 {
-	// USER_HZ is 100HZ in almost all cases (untrue for embedded and custom builds).
-	clockTickOnce.Do(
-		func() {
-			userHZ = int64(C.sysconf(C._SC_CLK_TCK))
-		},
-	)
-	return userHZ // USER_HZ
 }
 
 func getBootTimeInJiffies() int64 {
@@ -145,25 +129,6 @@ func getClockTimeNS(clockID int32) (int64, error) {
 		return 0, err
 	}
 	return ts.Nano(), nil
-}
-
-//
-// Time conversions functions
-//
-
-// ClockTicksToNsSinceBootTime converts kernel clock ticks to nanoseconds.
-func ClockTicksToNsSinceBootTime(ticks int64) uint64 {
-	// From the man page proc(5):
-	//
-	// starttime:
-	//
-	// The time the process started after system boot.
-	// Before Linux 2.6, this value was expressed in
-	// jiffies.  Since Linux 2.6, the value is expressed
-	// in clock ticks (divide by sysconf(_SC_CLK_TCK)).
-	//
-	// The format for this field was %lu before Linux 2.6.
-	return uint64(ticks * 1000000000 / GetUserHZ())
 }
 
 // BootToEpochNS converts time since boot to the epoch time
