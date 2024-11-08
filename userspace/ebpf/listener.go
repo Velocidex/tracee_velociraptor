@@ -21,6 +21,8 @@ type listener struct {
 	global_ctx context.Context
 
 	eid_monitored map[events.ID]bool
+
+	count int
 }
 
 func (self *listener) GetEIDs() (res []events.ID) {
@@ -59,7 +61,15 @@ func (self *listener) Feed(
 		return
 
 	case self.output_chan <- event:
+		self.count++
 	}
+}
+
+func (self *listener) GetCount() int {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	return self.count
 }
 
 func (self *listener) Close() {

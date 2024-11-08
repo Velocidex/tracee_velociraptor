@@ -10,4 +10,6 @@ type Stats struct {
 	IdleUnloadTimeout time.Duration
 
 	EBFProgramStatus string
+
+	EventCount int
 }

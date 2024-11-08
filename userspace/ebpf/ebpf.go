@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/Velocidex/ordereddict"
+	"github.com/Velocidex/tracee_velociraptor/userspace/bufferdecoder"
 	"github.com/Velocidex/tracee_velociraptor/userspace/compat/bpf"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/probes"
@@ -47,7 +48,9 @@ type EBPFManager struct {
 
 	bpfModule *bpf.Module
 
-	kernelSymbols *environment.KernelSymbolTable
+	KernelConfig *environment.KernelConfig
+
+	eventsParamTypes map[events.ID][]bufferdecoder.ArgType
 
 	logger Logger
 
@@ -55,7 +58,7 @@ type EBPFManager struct {
 	// listeners.
 	listeners []*listener
 
-	config_obj ebpfConfigEntryT
+	ebpf_config_obj ebpfConfigEntryT
 
 	// We do not unload the program immediately. Instead we count when
 	// the manager is idle and only unload the ebpf program after some
@@ -119,6 +122,7 @@ func (self *EBPFManager) Stats() (res Stats) {
 			eid_monitored[desc.GetName()] = int(k)
 		}
 		res.EIDMonitored = append(res.EIDMonitored, eid_monitored)
+		res.EventCount += listener.GetCount()
 	}
 	return res
 }
@@ -147,7 +151,7 @@ func (self *EBPFManager) EventLoop(ctx context.Context) {
 		rd.Close()
 	}()
 
-	self.logger.Debug("Reading ebpf events")
+	self.logger.Debug("EventLoop: Reading ebpf events")
 
 	for {
 		record, err := rd.Read()
@@ -218,7 +222,6 @@ func (self *EBPFManager) getRequiredKsyms() (res []string) {
 		res = append(res, k)
 	}
 
-	self.logger.Debug("Required KSyms %v\n", res)
 	return res
 }
 
@@ -287,9 +290,6 @@ func (self *EBPFManager) setTailCall(eid events.ID, remove bool) error {
 }
 
 func (self *EBPFManager) setEventIDPolicy() error {
-	event_config := &ebpfEventConfigT{
-		SubmitForPolicies: uint64(self.policy_id),
-	}
 
 	var event_inner_map *ebpf.Map
 
@@ -308,6 +308,18 @@ func (self *EBPFManager) setEventIDPolicy() error {
 
 	for _, key := range self._EidMonitored() {
 		eid := key
+
+		event_config := &ebpfEventConfigT{
+			SubmitForPolicies: uint64(self.policy_id),
+		}
+
+		params, pres := self.eventsParamTypes[eid]
+		if pres {
+			for n, paramType := range params {
+				event_config.ParamTypes |= (uint64(paramType) << (8 * n))
+			}
+		}
+
 		err = event_inner_map.Put(unsafe.Pointer(&eid),
 			unsafe.Pointer(event_config))
 		if err != nil {
@@ -332,7 +344,7 @@ func (self *EBPFManager) applyConfig() (err error) {
 	// Open the config map
 	cmap := self.collection.Maps["config_map"]
 	zero := uint64(0)
-	err = cmap.Put(unsafe.Pointer(&zero), unsafe.Pointer(&self.config_obj))
+	err = cmap.Put(unsafe.Pointer(&zero), unsafe.Pointer(&self.ebpf_config_obj))
 	if err != nil {
 		return err
 	}
@@ -394,7 +406,7 @@ func (self *EBPFManager) loadEbpf() (err error) {
 		return err
 	}
 
-	return self.updateEbpfState()
+	return nil
 }
 
 func (self *EBPFManager) updateEbpfState() (err error) {
@@ -455,6 +467,7 @@ func (self *EBPFManager) Watch(
 		}
 	}
 
+	// Update the ebpf state to reflect the new listene
 	err := self.updateEbpfState()
 	if err != nil {
 		self.listeners = nil
@@ -502,23 +515,41 @@ func NewEBPFManager(
 	config_obj.PoliciesVersion = 1
 	config_obj.PoliciesConfig.EnabledScopes = ^uint64(0)
 
+	// Load the kernel config
+	kernelConfig, err := environment.InitKernelConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	self := &EBPFManager{
 		policy_id:        1,
 		logger:           logger,
-		config_obj:       config_obj,
+		ebpf_config_obj:  config_obj,
 		idle_unload_time: config.IdleUnloadTimeout,
 		ctx:              ctx,
+		KernelConfig:     kernelConfig,
+		eventsParamTypes: make(map[events.ID][]bufferdecoder.ArgType),
 	}
 
 	if self.idle_unload_time == 0 {
 		self.idle_unload_time = time.Duration(5 * time.Minute)
 	}
 
+	// Initialize the event parameter types
+	for _, eventDefinition := range events.Core.GetDefinitions() {
+		id := eventDefinition.GetID()
+		params := eventDefinition.GetParams()
+		for _, param := range params {
+			self.eventsParamTypes[id] = append(self.eventsParamTypes[id],
+				bufferdecoder.GetParamType(param.Type))
+		}
+	}
+
 	// Set the clocks and initialize.
 	time_util.Init(unix.CLOCK_BOOTTIME)
 
 	// Allow the current process to lock memory for eBPF resources.
-	err := rlimit.RemoveMemlock()
+	err = rlimit.RemoveMemlock()
 	if err != nil {
 		return nil, err
 	}

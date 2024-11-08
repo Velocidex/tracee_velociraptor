@@ -3,6 +3,7 @@ package ebpf
 import (
 	"unsafe"
 
+	"github.com/Velocidex/tracee_velociraptor/userspace/ebpf/initialization"
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 )
@@ -28,89 +29,88 @@ func (self *EBPFManager) populateBPFMaps() error {
 		return errfmt.WrapError(err)
 	}
 
+	// Initialize kconfig ebpf map with values from the kernel config file.
+	// TODO: remove this from libbpf and try to rely in libbpf only for kconfig vars.
+	bpfKConfigMap, err := self.bpfModule.GetMap("kconfig_map") // u32, u32
+	if err != nil {
+		return errfmt.WrapError(err)
+	}
+	kconfigValues, err := initialization.LoadKconfigValues(self.KernelConfig)
+	if err != nil {
+		return errfmt.WrapError(err)
+	}
+	for key, value := range kconfigValues {
+		keyU32 := uint32(key)
+		valueU32 := uint32(value)
+		err = bpfKConfigMap.Update(unsafe.Pointer(&keyU32), unsafe.Pointer(&valueU32))
+		if err != nil {
+			return errfmt.WrapError(err)
+		}
+	}
+
 	/*
+					// Initialize the net_packet configuration eBPF map.
+					if pcaps.PcapsEnabled(t.config.Capture.Net) {
+						bpfNetConfigMap, err := t.bpfModule.GetMap("netconfig_map")
+						if err != nil {
+							return errfmt.WrapError(err)
+						}
 
-		// Initialize kconfig ebpf map with values from the kernel config file.
-		// TODO: remove this from libbpf and try to rely in libbpf only for kconfig vars.
-		bpfKConfigMap, err := self.bpfModule.GetMap("kconfig_map") // u32, u32
-		if err != nil {
-			return errfmt.WrapError(err)
-		}
-		kconfigValues, err := initialization.LoadKconfigValues(t.config.KernelConfig)
-		if err != nil {
-			return errfmt.WrapError(err)
-		}
-		for key, value := range kconfigValues {
-			keyU32 := uint32(key)
-			valueU32 := uint32(value)
-			err = bpfKConfigMap.Update(unsafe.Pointer(&keyU32), unsafe.Pointer(&valueU32))
+						netConfigVal := make([]byte, 8) // u32 capture_options + u32 capture_length
+						options := pcaps.GetPcapOptions(t.config.Capture.Net)
+						binary.LittleEndian.PutUint32(netConfigVal[0:4], uint32(options))
+						binary.LittleEndian.PutUint32(netConfigVal[4:8], t.config.Capture.Net.CaptureLength)
+
+						cZero := uint32(0)
+						err = bpfNetConfigMap.Update(unsafe.Pointer(&cZero), unsafe.Pointer(&netConfigVal[0]))
+						if err != nil {
+							return errfmt.Errorf("error updating net config eBPF map: %v", err)
+						}
+					}
+
+					// Initialize config and filter maps
+					err = t.populateFilterMaps(false)
+					if err != nil {
+						return errfmt.WrapError(err)
+					}
+
+				// Populate containers map with existing containers
+				err = t.containers.PopulateBpfMap(t.bpfModule)
+				if err != nil {
+					return errfmt.WrapError(err)
+				}
+
+			// Set filters given by the user to filter file write events
+			fileWritePathFilterMap, err := t.bpfModule.GetMap("file_write_path_filter") // u32, u32
+			if err != nil {
+				return err
+			}
+
+			for i := uint32(0); i < uint32(len(t.config.Capture.FileWrite.PathFilter)); i++ {
+				filterFilePathWriteBytes := []byte(t.config.Capture.FileWrite.PathFilter[i])
+				if err = fileWritePathFilterMap.Update(unsafe.Pointer(&i), unsafe.Pointer(&filterFilePathWriteBytes[0])); err != nil {
+					return err
+				}
+			}
+
+			// Set filters given by the user to filter file read events
+			fileReadPathFilterMap, err := t.bpfModule.GetMap("file_read_path_filter") // u32, u32
+			if err != nil {
+				return err
+			}
+
+			for i := uint32(0); i < uint32(len(t.config.Capture.FileRead.PathFilter)); i++ {
+				filterFilePathReadBytes := []byte(t.config.Capture.FileRead.PathFilter[i])
+				if err = fileReadPathFilterMap.Update(unsafe.Pointer(&i), unsafe.Pointer(&filterFilePathReadBytes[0])); err != nil {
+					return err
+				}
+			}
+
+			// Set filters given by the user to filter file read and write type and fds
+			fileTypeFilterMap, err := t.bpfModule.GetMap("file_type_filter") // u32, u32
 			if err != nil {
 				return errfmt.WrapError(err)
 			}
-		}
-
-		// Initialize the net_packet configuration eBPF map.
-		if pcaps.PcapsEnabled(t.config.Capture.Net) {
-			bpfNetConfigMap, err := t.bpfModule.GetMap("netconfig_map")
-			if err != nil {
-				return errfmt.WrapError(err)
-			}
-
-			netConfigVal := make([]byte, 8) // u32 capture_options + u32 capture_length
-			options := pcaps.GetPcapOptions(t.config.Capture.Net)
-			binary.LittleEndian.PutUint32(netConfigVal[0:4], uint32(options))
-			binary.LittleEndian.PutUint32(netConfigVal[4:8], t.config.Capture.Net.CaptureLength)
-
-			cZero := uint32(0)
-			err = bpfNetConfigMap.Update(unsafe.Pointer(&cZero), unsafe.Pointer(&netConfigVal[0]))
-			if err != nil {
-				return errfmt.Errorf("error updating net config eBPF map: %v", err)
-			}
-		}
-
-		// Initialize config and filter maps
-		err = t.populateFilterMaps(false)
-		if err != nil {
-			return errfmt.WrapError(err)
-		}
-
-		// Populate containers map with existing containers
-		err = t.containers.PopulateBpfMap(t.bpfModule)
-		if err != nil {
-			return errfmt.WrapError(err)
-		}
-
-		// Set filters given by the user to filter file write events
-		fileWritePathFilterMap, err := t.bpfModule.GetMap("file_write_path_filter") // u32, u32
-		if err != nil {
-			return err
-		}
-
-		for i := uint32(0); i < uint32(len(t.config.Capture.FileWrite.PathFilter)); i++ {
-			filterFilePathWriteBytes := []byte(t.config.Capture.FileWrite.PathFilter[i])
-			if err = fileWritePathFilterMap.Update(unsafe.Pointer(&i), unsafe.Pointer(&filterFilePathWriteBytes[0])); err != nil {
-				return err
-			}
-		}
-
-		// Set filters given by the user to filter file read events
-		fileReadPathFilterMap, err := t.bpfModule.GetMap("file_read_path_filter") // u32, u32
-		if err != nil {
-			return err
-		}
-
-		for i := uint32(0); i < uint32(len(t.config.Capture.FileRead.PathFilter)); i++ {
-			filterFilePathReadBytes := []byte(t.config.Capture.FileRead.PathFilter[i])
-			if err = fileReadPathFilterMap.Update(unsafe.Pointer(&i), unsafe.Pointer(&filterFilePathReadBytes[0])); err != nil {
-				return err
-			}
-		}
-
-		// Set filters given by the user to filter file read and write type and fds
-		fileTypeFilterMap, err := t.bpfModule.GetMap("file_type_filter") // u32, u32
-		if err != nil {
-			return errfmt.WrapError(err)
-		}
 
 		// Should match the value of CAPTURE_READ_TYPE_FILTER_IDX in eBPF code
 		captureReadTypeFilterIndex := uint32(0)
@@ -138,5 +138,6 @@ func (self *EBPFManager) populateBPFMaps() error {
 			}
 		}
 	*/
+
 	return nil
 }
