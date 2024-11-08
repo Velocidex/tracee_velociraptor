@@ -28,6 +28,8 @@ func (self *EBPFManager) UpdateKallsyms() error {
 	// includes dependent events, no need to recurse again).
 	allReqSymbols := self.getRequiredKsyms()
 
+	self.logger.Debug("Required KSyms %v\n", allReqSymbols)
+
 	kernelSymbols, err := environment.NewKernelSymbolTable(
 		environment.WithRequiredSymbols(allReqSymbols),
 	)

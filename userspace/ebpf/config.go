@@ -1,6 +1,8 @@
 package ebpf
 
-import "time"
+import (
+	"time"
+)
 
 // options config should match defined values in ebpf code
 type ConfigOptions uint32
