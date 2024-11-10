@@ -12,7 +12,31 @@ import (
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 
-func decodeEvent(dataRaw []byte) (*ordereddict.Dict, events.ID, error) {
+// Velociraptor Specific Events
+const (
+	NetPacketParsed events.ID = iota + 100000
+)
+
+var CoreEvents = map[events.ID]events.Definition{
+	NetPacketParsed: events.NewDefinition(
+		NetPacketParsed, NetPacketParsed,
+		"net_packet_parsed", events.NewVersion(1, 0, 0),
+		"parse raw network packets", "", false, false,
+		[]string{"packets"},
+		events.NewDependencies([]events.ID{events.NetPacketRaw}, nil, nil, nil,
+			events.NewCapabilities(nil, nil)),
+		nil, nil,
+	),
+}
+
+type eventType struct {
+	*ordereddict.Dict
+
+	System *ordereddict.Dict
+	tevent *trace.Event
+}
+
+func decodeEvent(dataRaw []byte) (*eventType, events.ID, error) {
 	ebpfMsgDecoder := bufferdecoder.New(dataRaw)
 	var eCtx bufferdecoder.EventContext
 
@@ -71,7 +95,23 @@ func decodeEvent(dataRaw []byte) (*ordereddict.Dict, events.ID, error) {
 		Set("HostName", string(bytes.TrimRight(eCtx.UtsName[:], "\x00"))).
 		Set("CgroupID", eCtx.CgroupID)
 
-	return ordereddict.NewDict().
-		Set("System", system_part).
-		Set("EventData", event_data), eCtx.EventID, nil
+	return &eventType{
+		Dict: ordereddict.NewDict().
+			Set("System", system_part).
+			Set("EventData", event_data),
+		System: system_part,
+		tevent: &trace.Event{
+			// Events are pre-processed in the ebpf code and we need
+			// to examine these fields in derivers.
+			ReturnValue: int(eCtx.Retval),
+			Args:        args,
+		},
+	}, eCtx.EventID, nil
+}
+
+func init() {
+	// Copy the Core events to our own set
+	for k, v := range events.CoreEvents {
+		CoreEvents[k] = v
+	}
 }

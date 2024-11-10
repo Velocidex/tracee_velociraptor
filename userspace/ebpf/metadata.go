@@ -23,7 +23,7 @@ func getEventFromDesc(desc events.Definition) *ordereddict.Dict {
 func GetEvents() *ordereddict.Dict {
 	res := ordereddict.NewDict()
 
-	for _, desc := range events.CoreEvents {
+	for _, desc := range CoreEvents {
 		res.Set(desc.GetName(), getEventFromDesc(desc))
 	}
 
@@ -31,7 +31,7 @@ func GetEvents() *ordereddict.Dict {
 }
 
 func DescByEventName(name string) (*ordereddict.Dict, bool) {
-	for id, desc := range events.CoreEvents {
+	for id, desc := range CoreEvents {
 		if desc.GetName() == name {
 			params := ordereddict.NewDict()
 			for _, p := range desc.GetParams() {
