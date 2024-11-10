@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aquasecurity/tracee/types/protocol"
+	"github.com/Velocidex/tracee_velociraptor/userspace/types/protocol"
 )
 
 // Event is a single result of an ebpf event process. It is used as a payload later delivered to tracee-rules.

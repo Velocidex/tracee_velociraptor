@@ -10,7 +10,9 @@ import (
 
 	"github.com/Velocidex/ordereddict"
 	"github.com/Velocidex/tracee_velociraptor/userspace/bufferdecoder"
+	"github.com/Velocidex/tracee_velociraptor/userspace/cgroup"
 	"github.com/Velocidex/tracee_velociraptor/userspace/compat/bpf"
+	"github.com/Velocidex/tracee_velociraptor/userspace/dnscache"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/probes"
 	time_util "github.com/Velocidex/tracee_velociraptor/userspace/time"
@@ -46,8 +48,8 @@ type EBPFManager struct {
 
 	probes *probes.ProbeGroup
 
-	bpfModule *bpf.Module
-
+	bpfModule    *bpf.Module
+	cgroups      *cgroup.Cgroups
 	KernelConfig *environment.KernelConfig
 
 	eventsParamTypes map[events.ID][]bufferdecoder.ArgType
@@ -57,6 +59,8 @@ type EBPFManager struct {
 	// A list of listeners - we multiplex the event stream to all
 	// listeners.
 	listeners []*listener
+
+	dnscache *dnscache.DNSCache
 
 	ebpf_config_obj ebpfConfigEntryT
 
@@ -114,7 +118,7 @@ func (self *EBPFManager) Stats() (res Stats) {
 		eid_monitored := make(map[string]int)
 
 		for _, k := range listener.GetEIDs() {
-			desc, pres := events.CoreEvents[k]
+			desc, pres := CoreEvents[k]
 			if !pres {
 				continue
 			}
@@ -206,7 +210,7 @@ func (self *EBPFManager) startHousekeeping(ctx context.Context) {
 func (self *EBPFManager) getRequiredKsyms() (res []string) {
 	tmp := make(map[string]bool)
 	for _, eid := range self._EidMonitored() {
-		definition, pres := events.CoreEvents[eid]
+		definition, pres := CoreEvents[eid]
 		if !pres {
 			continue
 		}
@@ -228,7 +232,7 @@ func (self *EBPFManager) getRequiredKsyms() (res []string) {
 func (self *EBPFManager) getProbeHandles() (res []probes.Handle) {
 	tmp := make(map[probes.Handle]bool)
 	for _, eid := range self._EidMonitored() {
-		definition, pres := events.CoreEvents[eid]
+		definition, pres := CoreEvents[eid]
 		if !pres {
 			continue
 		}
@@ -260,7 +264,7 @@ func (self *EBPFManager) setTailCalls() error {
 }
 
 func (self *EBPFManager) setTailCall(eid events.ID, remove bool) error {
-	definition, pres := events.CoreEvents[eid]
+	definition, pres := CoreEvents[eid]
 	if !pres {
 		return eidNotValid
 	}
@@ -430,7 +434,7 @@ func (self *EBPFManager) updateEbpfState() (err error) {
 	)
 
 	for _, handle := range self.getProbeHandles() {
-		err := self.probes.Attach(handle, kernelSymbols)
+		err := self.probes.Attach(handle, self.cgroups, kernelSymbols)
 		if err != nil {
 			// Not a fatal error, keep attaching to other events.
 			self.logger.Warn("Error attaching to handle %v: %v", handle, err)
@@ -455,7 +459,7 @@ func (self *EBPFManager) Watch(
 	defer self.mu.Unlock()
 
 	// Add a new listener to the event loop.
-	new_listener := NewListner(ctx, self.ctx, selected_events)
+	new_listener := NewListner(self.logger, self.dnscache, ctx, self.ctx, selected_events)
 	self.listeners = append(self.listeners, new_listener)
 
 	// If the program is not already loaded, start it.
@@ -521,6 +525,11 @@ func NewEBPFManager(
 		return nil, err
 	}
 
+	cgroups_obj, err := cgroup.NewCgroups()
+	if err != nil {
+		return nil, err
+	}
+
 	self := &EBPFManager{
 		policy_id:        1,
 		logger:           logger,
@@ -529,6 +538,7 @@ func NewEBPFManager(
 		ctx:              ctx,
 		KernelConfig:     kernelConfig,
 		eventsParamTypes: make(map[events.ID][]bufferdecoder.ArgType),
+		cgroups:          cgroups_obj,
 	}
 
 	if self.idle_unload_time == 0 {
