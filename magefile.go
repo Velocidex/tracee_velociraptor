@@ -6,6 +6,7 @@ package main
 import (
 	"io/ioutil"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/magefile/mage/mg"
@@ -66,36 +67,67 @@ func (self *Builder) generate() error {
 	}
 	defer closer()
 
-	return sh.RunWith(self.Env(), mg.GoCmd(), "run",
-		"github.com/cilium/ebpf/cmd/bpf2go",
-		"-type", "config_entry_t",
-		"-type", "event_context_t",
-		"-type", "event_config_t",
-		"-no-global-types",
-		"-target", "bpfel",
-		"ebpf", "../../c/tracee.bpf.c",
-		"--", "-I../../c/", "-D__TARGET_ARCH_x86", "-DDEBUG_K",
-	)
+	if runtime.GOARCH == "amd64" {
+		return sh.RunWith(self.Env(), mg.GoCmd(), "run",
+			"github.com/cilium/ebpf/cmd/bpf2go",
+			"-type", "config_entry_t",
+			"-type", "event_context_t",
+			"-type", "event_config_t",
+			"-no-global-types",
+			"-target", "bpfel",
+			"ebpf", "../../c/tracee.bpf.c",
+			"--", "-I../../c/", "-D__TARGET_ARCH_x86", "-DDEBUG_K",
+		)
+
+	} else if runtime.GOARCH == "arm64" {
+		return sh.RunWith(self.Env(), mg.GoCmd(), "run",
+			"github.com/cilium/ebpf/cmd/bpf2go",
+			"-type", "config_entry_t",
+			"-type", "event_context_t",
+			"-type", "event_config_t",
+			"-no-global-types",
+			"-target", "bpfel",
+			"ebpf", "../../c/tracee.bpf.c",
+			"--", "-I../../c/", "-D__TARGET_ARCH_arm64", "-DDEBUG_K",
+		)
+
+	} else {
+		panic("Architecture not supported!")
+	}
+
 }
 
 func (self *Builder) fixAssets() error {
+	// We only use little endian for the moment
 	for _, f := range []string{
 		"userspace/ebpf/ebpf_bpfel.go",
-		"userspace/ebpf/ebpf_bpfeb.go",
 	} {
 		replace_string_in_file(f, `//go:embed `, "//")
 		replace_string_in_file(f, `bytes.NewReader(_EbpfBytes)`,
 			`bytes.NewReader(getEbpfBytes())`)
 	}
 
-	err := fileb0x("userspace/ebpf/b0x_bpfel.yaml")
-	if err != nil {
-		return err
-	}
+	if runtime.GOARCH == "amd64" {
+		err := fileb0x("userspace/ebpf/b0x_bpfel_amd64.yaml")
+		if err != nil {
+			return err
+		}
 
-	err = replace_string_in_file("userspace/ebpf/ab0x.go", "func init()", "func Init()")
-	if err != nil {
-		return err
+		err = replace_string_in_file("userspace/ebpf/ab0x_amd64.go", "func init()", "func Init()")
+		if err != nil {
+			return err
+		}
+
+	} else if runtime.GOARCH == "arm64" {
+		err := fileb0x("userspace/ebpf/b0x_bpfel_arm64.yaml")
+		if err != nil {
+			return err
+		}
+
+		err = replace_string_in_file("userspace/ebpf/ab0x_arm64.go", "func init()", "func Init()")
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
