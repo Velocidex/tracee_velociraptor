@@ -13,6 +13,7 @@ statfunc int get_task_flags(struct task_struct *task);
 statfunc int get_current_task_syscall_id(void);
 statfunc u32 get_task_mnt_ns_id(struct task_struct *task);
 statfunc u32 get_task_pid_ns_for_children_id(struct task_struct *task);
+statfunc struct pid_namespace *get_task_pid_ns(struct task_struct *task);
 statfunc u32 get_task_pid_ns_id(struct task_struct *task);
 statfunc u32 get_task_uts_ns_id(struct task_struct *task);
 statfunc u32 get_task_ipc_ns_id(struct task_struct *task);
@@ -28,7 +29,7 @@ statfunc u64 get_task_start_time(struct task_struct *task);
 statfunc u32 get_task_host_pid(struct task_struct *task);
 statfunc u32 get_task_host_tgid(struct task_struct *task);
 statfunc struct task_struct *get_parent_task(struct task_struct *task);
-statfunc u32 get_task_exit_code(struct task_struct *task);
+statfunc int get_task_exit_code(struct task_struct *task);
 statfunc int get_task_parent_flags(struct task_struct *task);
 statfunc const struct cred *get_task_real_cred(struct task_struct *task);
 
@@ -52,8 +53,9 @@ statfunc int get_current_task_syscall_id(void)
     if (is_compat(curr)) {
         // Translate 32bit syscalls to 64bit syscalls, so we can send to the correct handler
         u32 *id_64 = bpf_map_lookup_elem(&sys_32_to_64_map, &id);
-        if (id_64 == 0)
-            return 0;
+        if (id_64 == NULL)
+            // outdated syscall list?
+            return NO_SYSCALL;
 
         id = *id_64;
     }
@@ -70,11 +72,10 @@ statfunc u32 get_task_pid_ns_for_children_id(struct task_struct *task)
     return get_pid_ns_for_children_id(BPF_CORE_READ(task, nsproxy));
 }
 
-statfunc u32 get_task_pid_ns_id(struct task_struct *task)
+statfunc struct pid_namespace *get_task_pid_ns(struct task_struct *task)
 {
     unsigned int level = 0;
     struct pid *pid = NULL;
-    struct pid_namespace *ns = NULL;
 
     if (bpf_core_type_exists(struct pid_link)) {
         struct task_struct___older_v50 *t = (void *) task;
@@ -84,7 +85,12 @@ statfunc u32 get_task_pid_ns_id(struct task_struct *task)
     }
 
     level = BPF_CORE_READ(pid, level);
-    ns = BPF_CORE_READ(pid, numbers[level].ns);
+    return BPF_CORE_READ(pid, numbers[level].ns);
+}
+
+statfunc u32 get_task_pid_ns_id(struct task_struct *task)
+{
+    struct pid_namespace *ns = get_task_pid_ns(task);
     return BPF_CORE_READ(ns, ns.inum);
 }
 
@@ -194,7 +200,7 @@ statfunc struct task_struct *get_leader_task(struct task_struct *task)
     return BPF_CORE_READ(task, group_leader);
 }
 
-statfunc u32 get_task_exit_code(struct task_struct *task)
+statfunc int get_task_exit_code(struct task_struct *task)
 {
     return BPF_CORE_READ(task, exit_code);
 }
