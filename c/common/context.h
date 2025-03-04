@@ -2,7 +2,7 @@
 #define __COMMON_CONTEXT_H__
 
 #include <vmlinux.h>
-#include <common/debug.h>
+
 #include <common/logging.h>
 #include <common/task.h>
 #include <common/cgroups.h>
@@ -20,6 +20,7 @@ statfunc int init_program_data(program_data_t *, void *, u32);
 statfunc int init_tailcall_program_data(program_data_t *, void *);
 statfunc bool reset_event(event_data_t *, u32);
 statfunc void reset_event_args_buf(event_data_t *);
+statfunc bool thread_stack_tracked(task_info_t *);
 
 // FUNCTIONS
 
@@ -102,9 +103,9 @@ statfunc event_config_t *get_event_config(u32 event_id, u16 policies_version)
 {
     // TODO: we can remove this extra lookup by moving to per event rules_version
     void *inner_events_map = bpf_map_lookup_elem(&events_map_version, &policies_version);
-    if (inner_events_map == NULL) {
+    if (inner_events_map == NULL)
         return NULL;
-    }
+
     return bpf_map_lookup_elem(inner_events_map, &event_id);
 }
 
@@ -126,8 +127,8 @@ statfunc int init_program_data(program_data_t *p, void *ctx, u32 event_id)
     if (unlikely(p->config == NULL))
         return 0;
 
-    p->event->args_buf.offset = 0;
-    p->event->args_buf.argnum = 0;
+    reset_event_args_buf(p->event);
+
     p->event->task = (struct task_struct *) bpf_get_current_task();
 
     __builtin_memset(&p->event->context.task, 0, sizeof(p->event->context.task));
@@ -194,8 +195,9 @@ statfunc int init_program_data(program_data_t *p, void *ctx, u32 event_id)
         p->event->config.submit_for_policies = 0;
         event_config_t *event_config = get_event_config(event_id, p->event->context.policies_version);
         if (event_config != NULL) {
-            p->event->config.param_types = event_config->param_types;
+            p->event->config.field_types = event_config->field_types;
             p->event->config.submit_for_policies = event_config->submit_for_policies;
+            p->event->config.data_filter = event_config->data_filter;
         }
     }
 
@@ -238,6 +240,9 @@ statfunc void reset_event_args_buf(event_data_t *event)
 {
     event->args_buf.offset = 0;
     event->args_buf.argnum = 0;
+
+    // Mark all entries in args_offset as invalid (0xFF)
+    __builtin_memset(event->args_buf.args_offset, 0xFF, sizeof(event->args_buf.args_offset));
 }
 
 // use this function in programs that send more than one event
@@ -251,11 +256,17 @@ statfunc bool reset_event(event_data_t *event, u32 event_id)
     if (event_config == NULL)
         return false;
 
-    event->config.param_types = event_config->param_types;
+    event->config.field_types = event_config->field_types;
     event->config.submit_for_policies = event_config->submit_for_policies;
     event->context.matched_policies = event_config->submit_for_policies;
+    event->config.data_filter = event_config->data_filter;
 
     return true;
+}
+
+statfunc bool thread_stack_tracked(task_info_t *task_info)
+{
+    return task_info->stack.start != 0 && task_info->stack.end != 0;
 }
 
 #endif

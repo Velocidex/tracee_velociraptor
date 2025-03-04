@@ -64,6 +64,8 @@ enum
     true = 1,
 };
 
+#define EEXIST 17
+
 #if defined(__TARGET_ARCH_x86)
 
 struct thread_info {
@@ -254,6 +256,28 @@ typedef struct {
     uid_t val;
 } kuid_t;
 
+#if defined(__TARGET_ARCH_x86)
+
+struct thread_struct {
+    unsigned long sp;
+};
+
+struct fork_frame {
+    struct pt_regs regs;
+};
+
+#elif defined(__TARGET_ARCH_arm64)
+
+struct cpu_context {
+    unsigned long sp;
+};
+
+struct thread_struct {
+    struct cpu_context cpu_context;
+};
+
+#endif
+
 struct task_struct {
     struct thread_info thread_info;
     unsigned int flags;
@@ -276,6 +300,7 @@ struct task_struct {
     struct signal_struct *signal;
     void *stack;
     struct sighand_struct *sighand;
+    struct thread_struct thread;
 };
 
 typedef struct {
@@ -286,9 +311,34 @@ struct signal_struct {
     atomic_t live;
 };
 
+struct rb_node {
+    struct rb_node *rb_right;
+    struct rb_node *rb_left;
+} __attribute__((aligned(sizeof(long))));
+
+struct vm_area_struct;
+
+struct vm_operations_struct {
+    const char *(*name)(struct vm_area_struct *vma);
+};
+
+struct vm_special_mapping {
+    const char *name;
+};
+
 struct vm_area_struct {
+    union {
+        struct {
+            unsigned long vm_start;
+            unsigned long vm_end;
+        };
+    };
+    struct rb_node vm_rb;
+    struct mm_struct *vm_mm;
     long unsigned int vm_flags;
+    const struct vm_operations_struct *vm_ops;
     struct file *vm_file;
+    void *vm_private_data;
 };
 
 typedef unsigned int __kernel_gid32_t;
@@ -335,6 +385,7 @@ struct ns_common {
 };
 
 struct pid_namespace {
+    struct task_struct *child_reaper;
     unsigned int level;
     struct ns_common ns;
 };
@@ -631,18 +682,33 @@ struct inode {
     umode_t i_mode;
     struct super_block *i_sb;
     long unsigned int i_ino;
-    struct timespec64 __i_ctime;
+    time64_t i_ctime_sec;
+    u32 i_ctime_nsec;
     loff_t i_size;
     struct file_operations *i_fop;
 };
 
+struct file_system_type {
+    const char *name;
+};
+
 struct super_block {
     dev_t s_dev;
+    struct file_system_type *s_type;
     unsigned long s_magic;
+};
+
+struct rb_root {
+    struct rb_node *rb_node;
 };
 
 struct mm_struct {
     struct {
+        struct rb_root mm_rb;
+        long unsigned int stack_vm;
+        long unsigned int start_brk;
+        long unsigned int brk;
+        long unsigned int start_stack;
         long unsigned int arg_start;
         long unsigned int arg_end;
         long unsigned int env_start;
@@ -652,12 +718,14 @@ struct mm_struct {
 
 struct vfsmount {
     struct dentry *mnt_root;
+    struct super_block *mnt_sb;
 };
 
 struct mount {
     struct mount *mnt_parent;
     struct dentry *mnt_mountpoint;
     struct vfsmount mnt;
+    struct mnt_namespace *mnt_ns;
 };
 
 struct qstr {
@@ -671,7 +739,10 @@ struct qstr {
     const unsigned char *name;
 };
 
+#define DCACHE_DISCONNECTED (1 << 5)
+
 struct dentry {
+    unsigned int d_flags;
     struct dentry *d_parent;
     struct qstr d_name;
     struct inode *d_inode;
@@ -687,6 +758,7 @@ enum bpf_func_id
     BPF_FUNC_get_current_task_btf = 158,
     BPF_FUNC_for_each_map_elem = 164,
     BPF_FUNC_task_pt_regs = 175,
+    BPF_FUNC_find_vma = 180,
 };
 
 #define MODULE_NAME_LEN (64 - sizeof(unsigned long))
@@ -727,17 +799,8 @@ struct module {
     struct module_memory mem[MOD_MEM_NUM_TYPES]; // kernel versions >= 6.4
 };
 
-struct rb_node {
-    struct rb_node *rb_right;
-    struct rb_node *rb_left;
-} __attribute__((aligned(sizeof(long))));
-
 struct latch_tree_node {
     struct rb_node node[2];
-};
-
-struct rb_root {
-    struct rb_node *rb_node;
 };
 
 typedef struct seqcount {
@@ -786,6 +849,11 @@ struct sockaddr {
 struct iovec {
     void *iov_base;
     __kernel_size_t iov_len;
+};
+
+enum
+{
+    BPF_F_NO_PREALLOC = (1U << 0),
 };
 
 enum bpf_map_type

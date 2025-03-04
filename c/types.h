@@ -124,6 +124,8 @@ enum event_id_e
     PROCESS_EXECUTE_FAILED,
     SECURITY_PATH_NOTIFY,
     SET_FS_PWD,
+    SUSPICIOUS_SYSCALL_SOURCE,
+    STACK_PIVOT,
     HIDDEN_KERNEL_MODULE_SEEKER,
     MODULE_LOAD,
     MODULE_FREE,
@@ -132,6 +134,8 @@ enum event_id_e
     SECURITY_TASK_SETRLIMIT,
     SECURITY_SETTIME64,
     CHMOD_COMMON,
+    OPEN_FILE_NS,
+    OPEN_FILE_MOUNT,
     MAX_EVENT_ID,
     NO_EVENT_SUBMIT,
 
@@ -222,11 +226,18 @@ enum container_state_e
     CONTAINER_STARTED      // a process in the cgroup executed a new binary
 };
 
+typedef struct {
+    u64 start;
+    u64 end;
+} address_range_t;
+
 typedef struct task_info {
     task_context_t context;
     syscall_data_t syscall_data;
-    bool syscall_traced; // indicates that syscall_data is valid
-    u8 container_state;  // the state of the container the task resides in
+    bool syscall_traced;   // indicates that syscall_data is valid
+    u8 container_state;    // the state of the container the task resides in
+    address_range_t stack; // stack area, only relevant for tasks that aren't
+                           // group leaders (threads)
 } task_info_t;
 
 typedef struct file_id {
@@ -285,6 +296,15 @@ typedef struct path_filter {
     char path[MAX_PATH_PREF_SIZE];
 } path_filter_t;
 
+typedef struct data_filter_key {
+    char str[MAX_DATA_FILTER_STR_SIZE];
+} data_filter_key_t;
+
+typedef struct data_filter_lpm_key {
+    u32 prefix_len;
+    char str[MAX_DATA_FILTER_STR_SIZE];
+} data_filter_lpm_key_t;
+
 typedef struct string_filter {
     char str[MAX_STR_FILTER_SIZE];
 } string_filter_t;
@@ -293,44 +313,50 @@ typedef struct ksym_name {
     char str[MAX_KSYM_NAME_SIZE];
 } ksym_name_t;
 
+typedef struct policy_key {
+    u16 version;
+    u16 __pad;
+    u32 event_id;
+} policy_key_t;
+
 typedef struct equality {
-    // bitmask with scopes on which a equal '=' filter is set
-    // its bit value will depend on the filter's equality precedence order
-    u64 equal_in_scopes;
-    // bitmask with scopes on which a filter equality is set
-    u64 equality_set_in_scopes;
+    // bitmap indicating which policies have a filter that uses the '=' operator (0 means '!=')
+    u64 equals_in_policies;
+    // bitmap indicating which policies have a filter that utilize the provided key
+    u64 key_used_in_policies;
 } eq_t;
 
 typedef struct policies_config {
-    // enabled scopes bitmask per filter
-    u64 uid_filter_enabled_scopes;
-    u64 pid_filter_enabled_scopes;
-    u64 mnt_ns_filter_enabled_scopes;
-    u64 pid_ns_filter_enabled_scopes;
-    u64 uts_ns_filter_enabled_scopes;
-    u64 comm_filter_enabled_scopes;
-    u64 cgroup_id_filter_enabled_scopes;
-    u64 cont_filter_enabled_scopes;
-    u64 new_cont_filter_enabled_scopes;
-    u64 new_pid_filter_enabled_scopes;
-    u64 proc_tree_filter_enabled_scopes;
-    u64 bin_path_filter_enabled_scopes;
-    u64 follow_filter_enabled_scopes;
-    // filter_out bitmask per filter
-    u64 uid_filter_out_scopes;
-    u64 pid_filter_out_scopes;
-    u64 mnt_ns_filter_out_scopes;
-    u64 pid_ns_filter_out_scopes;
-    u64 uts_ns_filter_out_scopes;
-    u64 comm_filter_out_scopes;
-    u64 cgroup_id_filter_out_scopes;
-    u64 cont_filter_out_scopes;
-    u64 new_cont_filter_out_scopes;
-    u64 new_pid_filter_out_scopes;
-    u64 proc_tree_filter_out_scopes;
-    u64 bin_path_filter_out_scopes;
-    // bitmask with scopes that have at least one filter enabled
-    u64 enabled_scopes;
+    // bitmap indicating which policies have the filter enabled
+    u64 uid_filter_enabled;
+    u64 pid_filter_enabled;
+    u64 mnt_ns_filter_enabled;
+    u64 pid_ns_filter_enabled;
+    u64 uts_ns_filter_enabled;
+    u64 comm_filter_enabled;
+    u64 cgroup_id_filter_enabled;
+    u64 cont_filter_enabled;
+    u64 new_cont_filter_enabled;
+    u64 new_pid_filter_enabled;
+    u64 proc_tree_filter_enabled;
+    u64 bin_path_filter_enabled;
+    u64 follow_filter_enabled;
+    // bitmap indicating whether to match a rule if the key is missing from its filter map
+    u64 uid_filter_match_if_key_missing;
+    u64 pid_filter_match_if_key_missing;
+    u64 mnt_ns_filter_match_if_key_missing;
+    u64 pid_ns_filter_match_if_key_missing;
+    u64 uts_ns_filter_match_if_key_missing;
+    u64 comm_filter_match_if_key_missing;
+    u64 cgroup_id_filter_match_if_key_missing;
+    u64 cont_filter_match_if_key_missing;
+    u64 new_cont_filter_match_if_key_missing;
+    u64 new_pid_filter_match_if_key_missing;
+    u64 proc_tree_filter_match_if_key_missing;
+    u64 bin_path_filter_match_if_key_missing;
+    // bitmap with policies that have at least one filter enabled
+    u64 enabled_policies;
+
     // global min max
     u64 uid_max;
     u64 uid_min;
@@ -347,9 +373,24 @@ typedef struct config_entry {
     policies_config_t policies_config;
 } config_entry_t;
 
+typedef struct string_filter_config {
+    u64 prefix_enabled;
+    u64 suffix_enabled;
+    u64 exact_enabled;
+    u64 prefix_match_if_key_missing;
+    u64 suffix_match_if_key_missing;
+    u64 exact_match_if_key_missing;
+} string_filter_config_t;
+
+typedef struct data_filter_config {
+    string_filter_config_t string;
+    // other types of filters
+} data_filter_config_t;
+
 typedef struct event_config {
     u64 submit_for_policies;
-    u64 param_types;
+    u64 field_types;
+    data_filter_config_t data_filter;
 } event_config_t;
 
 enum capture_options_e
@@ -369,7 +410,8 @@ typedef struct syscall_table_entry {
 typedef struct args_buffer {
     u8 argnum;
     char args[ARGS_BUF_SIZE];
-    u32 offset;
+    u16 offset;
+    u16 args_offset[MAX_ARGS];
 } args_buffer_t;
 
 typedef struct event_data {
@@ -422,6 +464,9 @@ enum bpf_log_id
 
     // hidden kernel module functions
     BPF_LOG_ID_HID_KER_MOD,
+
+    // find vma not supported
+    BPF_LOG_FIND_VMA_UNSUPPORTED,
 };
 
 typedef struct bpf_log {
@@ -565,5 +610,13 @@ struct sys_exit_tracepoint_args {
     int __syscall_nr;
     long ret;
 };
+
+// key for the syscall source map
+typedef struct {
+    u32 syscall;
+    u32 tgid;
+    u64 tgid_start_time;
+    u64 vma_addr;
+} syscall_source_key_t;
 
 #endif

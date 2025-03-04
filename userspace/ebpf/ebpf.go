@@ -52,7 +52,7 @@ type EBPFManager struct {
 	cgroups      *cgroup.Cgroups
 	KernelConfig *environment.KernelConfig
 
-	eventsParamTypes map[events.ID][]bufferdecoder.ArgType
+	eventsFieldTypes map[events.ID][]bufferdecoder.ArgType
 
 	logger Logger
 
@@ -317,10 +317,10 @@ func (self *EBPFManager) setEventIDPolicy() error {
 			SubmitForPolicies: uint64(self.policy_id),
 		}
 
-		params, pres := self.eventsParamTypes[eid]
+		params, pres := self.eventsFieldTypes[eid]
 		if pres {
 			for n, paramType := range params {
-				event_config.ParamTypes |= (uint64(paramType) << (8 * n))
+				event_config.FieldTypes |= (uint64(paramType) << (8 * n))
 			}
 		}
 
@@ -517,7 +517,7 @@ func NewEBPFManager(
 
 	// Install a noop policy to get all events.
 	config_obj.PoliciesVersion = 1
-	config_obj.PoliciesConfig.EnabledScopes = ^uint64(0)
+	config_obj.PoliciesConfig.EnabledPolicies = ^uint64(0)
 
 	// Load the kernel config
 	kernelConfig, err := environment.InitKernelConfig()
@@ -537,7 +537,7 @@ func NewEBPFManager(
 		idle_unload_time: config.IdleUnloadTimeout,
 		ctx:              ctx,
 		KernelConfig:     kernelConfig,
-		eventsParamTypes: make(map[events.ID][]bufferdecoder.ArgType),
+		eventsFieldTypes: make(map[events.ID][]bufferdecoder.ArgType),
 		cgroups:          cgroups_obj,
 	}
 
@@ -550,7 +550,7 @@ func NewEBPFManager(
 		id := eventDefinition.GetID()
 		params := eventDefinition.GetParams()
 		for _, param := range params {
-			self.eventsParamTypes[id] = append(self.eventsParamTypes[id],
+			self.eventsFieldTypes[id] = append(self.eventsFieldTypes[id],
 				bufferdecoder.GetParamType(param.Type))
 		}
 	}
