@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"regexp"
 	"sync"
 	"time"
 	"unsafe"
@@ -380,6 +381,40 @@ func (self *EBPFManager) unloadEbpf() {
 	self.collection = nil
 }
 
+var (
+	duplicateErrorRegex = regexp.MustCompile(`symbol ([^:]+): duplicate found at address`)
+)
+
+// cilium/ebpf will fail to load the programs if any of the symbols
+// are duplicated. Depending on the system this can happen on older
+// kernels. The following code traps this condition and removes those
+// programs to try again.
+func (self *EBPFManager) catchEbpfLoadingErrors() (*ebpf.Collection, error) {
+
+retry_loop:
+	for {
+		res, err := ebpf.NewCollectionWithOptions(self.spec, ebpf.CollectionOptions{})
+		if err == nil {
+			return res, nil
+		}
+
+		m := duplicateErrorRegex.FindStringSubmatch(err.Error())
+		if len(m) > 1 {
+			// Remove the offending program and try again.
+			for key, p := range self.spec.Programs {
+				if p.AttachTo == m[1] {
+					self.logger.Debug("Disabling program %v due to error: %v",
+						key, err.Error())
+					delete(self.spec.Programs, key)
+					continue retry_loop
+				}
+			}
+		}
+
+		return nil, err
+	}
+}
+
 func (self *EBPFManager) loadEbpf() (err error) {
 	if self.collection != nil {
 		return nil
@@ -394,10 +429,9 @@ func (self *EBPFManager) loadEbpf() (err error) {
 		return
 	}
 
-	self.collection, err = ebpf.NewCollectionWithOptions(
-		self.spec, ebpf.CollectionOptions{})
+	self.collection, err = self.catchEbpfLoadingErrors()
 	if err != nil {
-		return
+		return err
 	}
 
 	self.logger.Debug("Load done in %v", time.Now().Sub(start))
