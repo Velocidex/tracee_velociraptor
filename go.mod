@@ -14,7 +14,7 @@ require (
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c
-	golang.org/x/net v0.36.0
+	golang.org/x/net v0.41.0
 	golang.org/x/sys v0.33.0
 	gotest.tools v2.2.0+incompatible
 	kernel.org/pub/linux/libs/security/libcap/cap v1.2.71
