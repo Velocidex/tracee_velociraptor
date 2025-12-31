@@ -41,9 +41,31 @@ type listener struct {
 
 	derivation map[events.ID][]derivedEvent
 
+	// Total events we considered
+	prefilter_count int
+
+	// Total events parsed (after prefilter accepted)
 	count int
 
 	logger Logger
+
+	prefilter func(buf []byte) bool
+}
+
+func (self *listener) SetPrefilter(filter func(in []byte) bool) {
+	self.prefilter = filter
+}
+
+func (self *listener) Prefilter(in []byte) bool {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	self.prefilter_count++
+	if self.prefilter == nil {
+		return true
+	}
+
+	return self.prefilter(in)
 }
 
 func (self *listener) maybeAddDerivation(
@@ -248,6 +270,13 @@ func (self *listener) GetCount() int {
 	defer self.mu.Unlock()
 
 	return self.count
+}
+
+func (self *listener) GetPrefilterEvents() int {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	return self.prefilter_count
 }
 
 func (self *listener) Close() {

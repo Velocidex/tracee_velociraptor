@@ -11,5 +11,9 @@ type Stats struct {
 
 	EBFProgramStatus string
 
+	// Total event seen before prefilter
+	PrefilterEventCount int
+
+	// Total events parsed
 	EventCount int
 }
