@@ -128,6 +128,7 @@ func (self *EBPFManager) Stats() (res Stats) {
 		}
 		res.EIDMonitored = append(res.EIDMonitored, eid_monitored)
 		res.EventCount += listener.GetCount()
+		res.PrefilterEventCount += listener.GetPrefilterEvents()
 	}
 	return res
 }
@@ -171,17 +172,27 @@ func (self *EBPFManager) EventLoop(ctx context.Context) {
 		listeners := self.listeners
 		self.mu.Unlock()
 
+		var interested_listeners []*listener
+		for _, l := range listeners {
+			if !l.Prefilter(record.RawSample) {
+				continue
+			}
+			interested_listeners = append(interested_listeners, l)
+		}
+
 		// No listeners - dont bother about it.
-		if len(listeners) == 0 {
+		if len(interested_listeners) == 0 {
 			continue
 		}
 
+		// TODO: Implement prefiltering on listeners for more
+		// efficient pre-matching.
 		event, eid, err := decodeEvent(record.RawSample)
 		if err != nil {
 			continue
 		}
 
-		for _, listener := range listeners {
+		for _, listener := range interested_listeners {
 			listener.Feed(eid, event)
 		}
 	}
@@ -485,15 +496,16 @@ func (self *EBPFManager) updateEbpfState() (err error) {
 }
 
 func (self *EBPFManager) Watch(
-	ctx context.Context,
-	selected_events []events.ID) (
+	ctx context.Context, opts EBPFWatchOptions) (
 	chan *ordereddict.Dict, func(), error) {
 
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
 	// Add a new listener to the event loop.
-	new_listener := NewListner(self.logger, self.dnscache, ctx, self.ctx, selected_events)
+	new_listener := NewListner(self.logger, self.dnscache, ctx,
+		self.ctx, opts.SelectedEvents)
+	new_listener.SetPrefilter(opts.Prefilter)
 	self.listeners = append(self.listeners, new_listener)
 
 	// If the program is not already loaded, start it.

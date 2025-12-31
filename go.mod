@@ -1,12 +1,12 @@
 module github.com/Velocidex/tracee_velociraptor
 
-go 1.23.2
+go 1.24.0
 
 require (
 	github.com/Masterminds/semver/v3 v3.3.0
 	github.com/Velocidex/ordereddict v0.0.0-20230909174157-2aa49cc5d11d
 	github.com/alecthomas/kingpin v2.2.6+incompatible
-	github.com/cilium/ebpf v0.18.0
+	github.com/cilium/ebpf v0.20.0
 	github.com/google/gopacket v1.1.19
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/magefile/mage v1.15.0
@@ -14,8 +14,8 @@ require (
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c
-	golang.org/x/net v0.41.0
-	golang.org/x/sys v0.33.0
+	golang.org/x/net v0.46.0
+	golang.org/x/sys v0.39.0
 	gotest.tools v2.2.0+incompatible
 	kernel.org/pub/linux/libs/security/libcap/cap v1.2.71
 )
