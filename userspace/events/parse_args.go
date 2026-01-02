@@ -4,226 +4,264 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/parsers"
+	timeutil "github.com/Velocidex/tracee_velociraptor/userspace/time"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
+	pb "github.com/aquasecurity/tracee/api/v1beta1"
 )
 
-func ParseArgs(event *trace.Event) error {
-	for i := range event.Args {
-		// Convert uintptr to hex string
-		if ptr, isUintptr := event.Args[i].Value.(uintptr); isUintptr {
+// ParseDataFields parses the protobuf event data for the given event ID.
+// This modifies EventValue entries in-place by updating their Value oneof field.
+func ParseDataFields(data []*pb.EventValue, eventID int) error {
+	// Convert pointer values to hex string format for display
+	for i := range data {
+		if val, ok := data[i].Value.(*pb.EventValue_Pointer); ok {
+			// Format as hex string with 0x prefix
 			v := []byte{'0', 'x'}
-			v = strconv.AppendUint(v, uint64(ptr), 16)
-			event.Args[i].Value = string(v)
+			v = strconv.AppendUint(v, val.Pointer, 16)
+			data[i].Value = &pb.EventValue_Str{Str: string(v)}
 		}
 	}
 
-	switch ID(event.EventID) {
+	evtID := ID(eventID)
+	switch evtID {
 	case MemProtAlert:
-		if alertArg := GetArg(event, "alert"); alertArg != nil {
-			if alert, isUint32 := alertArg.Value.(uint32); isUint32 {
-				parseMemProtAlert(alertArg, alert)
+		if alertField := GetFieldValue(data, "alert"); alertField != nil {
+			if alertVal, ok := alertField.Value.(*pb.EventValue_UInt32); ok {
+				parseMemProtAlert(alertField, alertVal.UInt32)
 			}
 		}
-		if protArg := GetArg(event, "prot"); protArg != nil {
-			if prot, isInt32 := protArg.Value.(int32); isInt32 {
-				parseMMapProt(protArg, uint64(prot))
+		if protField := GetFieldValue(data, "prot"); protField != nil {
+			if protVal, ok := protField.Value.(*pb.EventValue_Int32); ok {
+				parseMMapProt(protField, uint64(protVal.Int32))
 			}
 		}
-		if prevProtArg := GetArg(event, "prev_prot"); prevProtArg != nil {
-			if prevProt, isInt32 := prevProtArg.Value.(int32); isInt32 {
-				parseMMapProt(prevProtArg, uint64(prevProt))
+		if prevProtField := GetFieldValue(data, "prev_prot"); prevProtField != nil {
+			if prevProtVal, ok := prevProtField.Value.(*pb.EventValue_Int32); ok {
+				parseMMapProt(prevProtField, uint64(prevProtVal.Int32))
 			}
 		}
 	case SysEnter, SysExit:
-		if syscallArg := GetArg(event, "syscall"); syscallArg != nil {
-			if id, isInt32 := syscallArg.Value.(int32); isInt32 {
-				parseSyscall(syscallArg, id)
+		if syscallField := GetFieldValue(data, "syscall"); syscallField != nil {
+			if syscallVal, ok := syscallField.Value.(*pb.EventValue_Int32); ok {
+				parseSyscall(syscallField, syscallVal.Int32)
 			}
 		}
 	case CapCapable:
-		if capArg := GetArg(event, "cap"); capArg != nil {
-			if capability, isInt32 := capArg.Value.(int32); isInt32 {
-				parseCapability(capArg, uint64(capability))
+		if capField := GetFieldValue(data, "cap"); capField != nil {
+			if capVal, ok := capField.Value.(*pb.EventValue_Int32); ok {
+				parseCapability(capField, uint64(capVal.Int32))
 			}
 		}
 	case SecurityMmapFile, DoMmap:
-		if protArg := GetArg(event, "prot"); protArg != nil {
-			if prot, isUint64 := protArg.Value.(uint64); isUint64 {
-				parseMMapProt(protArg, prot)
+		if protField := GetFieldValue(data, "prot"); protField != nil {
+			if protVal, ok := protField.Value.(*pb.EventValue_UInt64); ok {
+				parseMMapProt(protField, protVal.UInt64)
 			}
 		}
 	case Mmap, Mprotect, PkeyMprotect:
-		if protArg := GetArg(event, "prot"); protArg != nil {
-			if prot, isInt32 := protArg.Value.(int32); isInt32 {
-				parseMMapProt(protArg, uint64(prot))
+		if protField := GetFieldValue(data, "prot"); protField != nil {
+			if protVal, ok := protField.Value.(*pb.EventValue_Int32); ok {
+				parseMMapProt(protField, uint64(protVal.Int32))
 			}
 		}
 	case SecurityFileMprotect:
-		if protArg := GetArg(event, "prot"); protArg != nil {
-			if prot, isInt32 := protArg.Value.(int32); isInt32 {
-				parseMMapProt(protArg, uint64(prot))
+		if protField := GetFieldValue(data, "prot"); protField != nil {
+			if protVal, ok := protField.Value.(*pb.EventValue_Int32); ok {
+				parseMMapProt(protField, uint64(protVal.Int32))
 			}
 		}
-		if prevProtArg := GetArg(event, "prev_prot"); prevProtArg != nil {
-			if prevProt, isInt32 := prevProtArg.Value.(int32); isInt32 {
-				parseMMapProt(prevProtArg, uint64(prevProt))
+		if prevProtField := GetFieldValue(data, "prev_prot"); prevProtField != nil {
+			if prevProtVal, ok := prevProtField.Value.(*pb.EventValue_Int32); ok {
+				parseMMapProt(prevProtField, uint64(prevProtVal.Int32))
 			}
 		}
 	case Ptrace:
-		if reqArg := GetArg(event, "request"); reqArg != nil {
-			if req, isInt64 := reqArg.Value.(int64); isInt64 {
-				parsePtraceRequestArgument(reqArg, uint64(req))
+		if reqField := GetFieldValue(data, "request"); reqField != nil {
+			if reqVal, ok := reqField.Value.(*pb.EventValue_Int64); ok {
+				parsePtraceRequestArgument(reqField, uint64(reqVal.Int64))
 			}
 		}
-	case Prctl:
-		if optArg := GetArg(event, "option"); optArg != nil {
-			if opt, isInt32 := optArg.Value.(int32); isInt32 {
-				parsePrctlOption(optArg, uint64(opt))
+	case Prctl, SecurityTaskPrctl:
+		if optField := GetFieldValue(data, "option"); optField != nil {
+			if optVal, ok := optField.Value.(*pb.EventValue_Int32); ok {
+				parsePrctlOption(optField, uint64(optVal.Int32))
 			}
 		}
 	case Socketcall:
-		if callArg := GetArg(event, "call"); callArg != nil {
-			if call, isInt32 := callArg.Value.(int32); isInt32 {
-				parseSocketcallCall(callArg, uint64(call))
+		if callField := GetFieldValue(data, "call"); callField != nil {
+			if callVal, ok := callField.Value.(*pb.EventValue_Int32); ok {
+				parseSocketcallCall(callField, uint64(callVal.Int32))
 			}
 		}
 	case Socket:
-		if domArg := GetArg(event, "domain"); domArg != nil {
-			if dom, isInt32 := domArg.Value.(int32); isInt32 {
-				parseSocketDomainArgument(domArg, uint64(dom))
+		if domField := GetFieldValue(data, "domain"); domField != nil {
+			if domVal, ok := domField.Value.(*pb.EventValue_Int32); ok {
+				parseSocketDomainArgument(domField, uint64(domVal.Int32))
 			}
 		}
-		if typeArg := GetArg(event, "type"); typeArg != nil {
-			if typ, isInt32 := typeArg.Value.(int32); isInt32 {
-				parseSocketType(typeArg, uint64(typ))
+		if typeField := GetFieldValue(data, "type"); typeField != nil {
+			if typeVal, ok := typeField.Value.(*pb.EventValue_Int32); ok {
+				parseSocketType(typeField, uint64(typeVal.Int32))
 			}
 		}
 	case SecuritySocketCreate, SecuritySocketConnect:
-		if domArg := GetArg(event, "family"); domArg != nil {
-			if dom, isInt32 := domArg.Value.(int32); isInt32 {
-				parseSocketDomainArgument(domArg, uint64(dom))
+		if domField := GetFieldValue(data, "family"); domField != nil {
+			if domVal, ok := domField.Value.(*pb.EventValue_Int32); ok {
+				parseSocketDomainArgument(domField, uint64(domVal.Int32))
 			}
 		}
-		if typeArg := GetArg(event, "type"); typeArg != nil {
-			if typ, isInt32 := typeArg.Value.(int32); isInt32 {
-				parseSocketType(typeArg, uint64(typ))
+		if typeField := GetFieldValue(data, "type"); typeField != nil {
+			if typeVal, ok := typeField.Value.(*pb.EventValue_Int32); ok {
+				parseSocketType(typeField, uint64(typeVal.Int32))
 			}
 		}
-	case Access, Faccessat:
-		if modeArg := GetArg(event, "mode"); modeArg != nil {
-			if mode, isInt32 := modeArg.Value.(int32); isInt32 {
-				parseAccessMode(modeArg, uint64(mode))
+	case Access:
+		if modeField := GetFieldValue(data, "mode"); modeField != nil {
+			if modeVal, ok := modeField.Value.(*pb.EventValue_Int32); ok {
+				parseAccessMode(modeField, uint64(modeVal.Int32))
+			}
+		}
+	case Faccessat:
+		if modeField := GetFieldValue(data, "mode"); modeField != nil {
+			if modeVal, ok := modeField.Value.(*pb.EventValue_Int32); ok {
+				parseAccessMode(modeField, uint64(modeVal.Int32))
+			}
+		}
+		if flagsField := GetFieldValue(data, "flags"); flagsField != nil {
+			if flagsVal, ok := flagsField.Value.(*pb.EventValue_Int32); ok {
+				parseFaccessatFlag(flagsField, uint64(flagsVal.Int32))
 			}
 		}
 	case Execveat:
-		if flagsArg := GetArg(event, "flags"); flagsArg != nil {
-			if flags, isInt32 := flagsArg.Value.(int32); isInt32 {
-				parseExecFlag(flagsArg, uint64(flags))
+		if flagsField := GetFieldValue(data, "flags"); flagsField != nil {
+			if flagsVal, ok := flagsField.Value.(*pb.EventValue_Int32); ok {
+				parseExecveatFlag(flagsField, uint64(flagsVal.Int32))
 			}
 		}
 	case Open, Openat, SecurityFileOpen:
-		if flagsArg := GetArg(event, "flags"); flagsArg != nil {
-			if flags, isInt32 := flagsArg.Value.(int32); isInt32 {
-				parseOpenFlagArgument(flagsArg, uint64(flags))
+		if flagsField := GetFieldValue(data, "flags"); flagsField != nil {
+			if flagsVal, ok := flagsField.Value.(*pb.EventValue_Int32); ok {
+				parseOpenFlagArgument(flagsField, uint64(flagsVal.Int32))
 			}
 		}
 	case Mknod, Mknodat, SecurityInodeMknod, Chmod, Fchmod, Fchmodat, ChmodCommon:
-		if modeArg := GetArg(event, "mode"); modeArg != nil {
-			if mode, isUint16 := modeArg.Value.(uint16); isUint16 {
-				parseInodeMode(modeArg, uint64(mode))
+		if modeField := GetFieldValue(data, "mode"); modeField != nil {
+			// mode is UInt32 (widened from uint16)
+			if modeVal, ok := modeField.Value.(*pb.EventValue_UInt32); ok {
+				parseInodeMode(modeField, uint64(modeVal.UInt32))
+			}
+		}
+		if evtID == Fchmodat {
+			if flagsField := GetFieldValue(data, "flags"); flagsField != nil {
+				if flagsVal, ok := flagsField.Value.(*pb.EventValue_Int32); ok {
+					parseFchmodatFlag(flagsField, uint64(flagsVal.Int32))
+				}
 			}
 		}
 	case Clone:
-		if flagsArg := GetArg(event, "flags"); flagsArg != nil {
-			if flags, isUint64 := flagsArg.Value.(uint64); isUint64 {
-				parseCloneFlags(flagsArg, flags)
+		if flagsField := GetFieldValue(data, "flags"); flagsField != nil {
+			if flagsVal, ok := flagsField.Value.(*pb.EventValue_UInt64); ok {
+				parseCloneFlags(flagsField, flagsVal.UInt64)
 			}
 		}
 	case Bpf, SecurityBPF:
-		if cmdArg := GetArg(event, "cmd"); cmdArg != nil {
-			if cmd, isInt32 := cmdArg.Value.(int32); isInt32 {
-				parseBPFCmd(cmdArg, uint64(cmd))
+		if cmdField := GetFieldValue(data, "cmd"); cmdField != nil {
+			if cmdVal, ok := cmdField.Value.(*pb.EventValue_Int32); ok {
+				parseBPFCmd(cmdField, uint64(cmdVal.Int32))
 			}
 		}
-	case SecurityKernelReadFile, SecurityPostReadFile:
-		if typeArg := GetArg(event, "type"); typeArg != nil {
-			if readFileId, isInt32 := typeArg.Value.(trace.KernelReadType); isInt32 {
-				typeArg.Type = "string"
-				typeArg.Value = readFileId.String()
+	case SecurityKernelReadFile, SecurityKernelPostReadFile:
+		if typeField := GetFieldValue(data, "type"); typeField != nil {
+			if typeVal, ok := typeField.Value.(*pb.EventValue_Int32); ok {
+				parseKernelReadType(typeField, typeVal.Int32)
 			}
 		}
 	case SchedProcessExec:
-		if modeArg := GetArg(event, "stdin_type"); modeArg != nil {
-			if mode, isUint16 := modeArg.Value.(uint16); isUint16 {
-				parseInodeMode(modeArg, uint64(mode))
+		if modeField := GetFieldValue(data, "stdin_type"); modeField != nil {
+			// stdin_type is UInt32 (widened from uint16)
+			if modeVal, ok := modeField.Value.(*pb.EventValue_UInt32); ok {
+				parseInodeMode(modeField, uint64(modeVal.UInt32))
 			}
 		}
 	case DirtyPipeSplice:
-		if modeArg := GetArg(event, "in_file_type"); modeArg != nil {
-			if mode, isUint16 := modeArg.Value.(uint16); isUint16 {
-				parseInodeMode(modeArg, uint64(mode))
+		if modeField := GetFieldValue(data, "in_file_type"); modeField != nil {
+			// in_file_type is UInt32 (widened from uint16)
+			if modeVal, ok := modeField.Value.(*pb.EventValue_UInt32); ok {
+				parseInodeMode(modeField, uint64(modeVal.UInt32))
 			}
 		}
 	case SecuritySocketSetsockopt, Setsockopt, Getsockopt:
-		if levelArg := GetArg(event, "level"); levelArg != nil {
-			if level, isInt := levelArg.Value.(int32); isInt {
-				parseSocketLevel(levelArg, uint64(level))
+		if levelField := GetFieldValue(data, "level"); levelField != nil {
+			if levelVal, ok := levelField.Value.(*pb.EventValue_Int32); ok {
+				parseSocketLevel(levelField, uint64(levelVal.Int32))
 			}
 		}
-		if optionNameArg := GetArg(event, "optname"); optionNameArg != nil {
-			if opt, isInt := optionNameArg.Value.(int32); isInt {
-				parseGetSocketOption(optionNameArg, uint64(opt), ID(event.EventID))
+		if optionNameField := GetFieldValue(data, "optname"); optionNameField != nil {
+			if optVal, ok := optionNameField.Value.(*pb.EventValue_Int32); ok {
+				parseGetSocketOption(optionNameField, uint64(optVal.Int32), ID(eventID))
 			}
 		}
 	case BpfAttach:
-		if progTypeArg := GetArg(event, "prog_type"); progTypeArg != nil {
-			if progType, isInt := progTypeArg.Value.(int32); isInt {
-				parseBPFProgType(progTypeArg, uint64(progType))
+		if progTypeField := GetFieldValue(data, "prog_type"); progTypeField != nil {
+			if progTypeVal, ok := progTypeField.Value.(*pb.EventValue_Int32); ok {
+				parseBPFProgType(progTypeField, uint64(progTypeVal.Int32))
 			}
 		}
-		if helpersArg := GetArg(event, "prog_helpers"); helpersArg != nil {
-			if helpersList, isUintSlice := helpersArg.Value.([]uint64); isUintSlice {
-				parseBpfHelpersUsage(helpersArg, helpersList)
+		if helpersField := GetFieldValue(data, "prog_helpers"); helpersField != nil {
+			if helpersVal, ok := helpersField.Value.(*pb.EventValue_UInt64Array); ok {
+				parseBpfHelpersUsage(helpersField, helpersVal.UInt64Array.Value)
 			}
 		}
-		if attachTypeArg := GetArg(event, "attach_type"); attachTypeArg != nil {
-			if attachType, isInt := attachTypeArg.Value.(int32); isInt {
-				parseBpfAttachType(attachTypeArg, attachType)
+		if attachTypeField := GetFieldValue(data, "attach_type"); attachTypeField != nil {
+			if attachTypeVal, ok := attachTypeField.Value.(*pb.EventValue_Int32); ok {
+				parseBpfAttachType(attachTypeField, attachTypeVal.Int32)
 			}
 		}
 	case SecurityBpfProg:
-		if progTypeArg := GetArg(event, "type"); progTypeArg != nil {
-			if progType, isInt := progTypeArg.Value.(int32); isInt {
-				parseBPFProgType(progTypeArg, uint64(progType))
+		if progTypeField := GetFieldValue(data, "type"); progTypeField != nil {
+			if progTypeVal, ok := progTypeField.Value.(*pb.EventValue_Int32); ok {
+				parseBPFProgType(progTypeField, uint64(progTypeVal.Int32))
 			}
 		}
-		if helpersArg := GetArg(event, "helpers"); helpersArg != nil {
-			if helpersList, isUintSlice := helpersArg.Value.([]uint64); isUintSlice {
-				parseBpfHelpersUsage(helpersArg, helpersList)
+		if helpersField := GetFieldValue(data, "helpers"); helpersField != nil {
+			if helpersVal, ok := helpersField.Value.(*pb.EventValue_UInt64Array); ok {
+				parseBpfHelpersUsage(helpersField, helpersVal.UInt64Array.Value)
 			}
 		}
 	case SecurityPathNotify:
-		if maskArg := GetArg(event, "mask"); maskArg != nil {
-			if mask, isUint64 := maskArg.Value.(uint64); isUint64 {
-				maskArg.Type = "string"
-				maskArg.Value = parsers.ParseFsNotifyMask(mask).String()
+		if maskField := GetFieldValue(data, "mask"); maskField != nil {
+			if maskVal, ok := maskField.Value.(*pb.EventValue_UInt64); ok {
+				maskField.Value = &pb.EventValue_Str{Str: parsers.ParseFsNotifyMask(maskVal.UInt64).String()}
 			}
 		}
-		if objTypeArg := GetArg(event, "obj_type"); objTypeArg != nil {
-			if objType, isUint := objTypeArg.Value.(uint32); isUint {
-				parseFsNotifyObjType(objTypeArg, uint64(objType))
+		if objTypeField := GetFieldValue(data, "obj_type"); objTypeField != nil {
+			if objTypeVal, ok := objTypeField.Value.(*pb.EventValue_UInt32); ok {
+				parseFsNotifyObjType(objTypeField, uint64(objTypeVal.UInt32))
+			}
+		}
+	case SuspiciousSyscallSource, StackPivot:
+		if vmaFlagsField := GetFieldValue(data, "vma_flags"); vmaFlagsField != nil {
+			if vmaFlagsVal, ok := vmaFlagsField.Value.(*pb.EventValue_UInt64); ok {
+				vmaFlagsField.Value = &pb.EventValue_Str{Str: parsers.ParseVmFlags(vmaFlagsVal.UInt64).String()}
 			}
 		}
 	}
+
+	// Parse extended events (only available in extended builds)
+	//parseEventDataExtended(evtID, data)
 
 	return nil
 }
 
 /*
-func ParseArgsFDs(event *trace.Event, origTimestamp uint64, fdArgPathMap *bpf.BPFMap) error {
-	if fdArg := GetArg(event, "fd"); fdArg != nil {
-		if fd, isInt32 := fdArg.Value.(int32); isInt32 {
+
+// ParseDataFieldsFDs parses file descriptor arguments in the protobuf event data.
+func ParseDataFieldsFDs(data []*pb.EventValue, origTimestamp uint64, fdArgPathMap *bpf.BPFMap) error {
+	if fdField := GetFieldValue(data, "fd"); fdField != nil {
+		if fdVal, ok := fdField.Value.(*pb.EventValue_Int32); ok {
+			fd := fdVal.Int32
 			ts := origTimestamp
 			bs, err := fdArgPathMap.GetValue(unsafe.Pointer(&ts))
 			if err != nil {
@@ -231,29 +269,79 @@ func ParseArgsFDs(event *trace.Event, origTimestamp uint64, fdArgPathMap *bpf.BP
 			}
 
 			fpath := string(bytes.Trim(bs, "\x00"))
-			fdArg.Value = fmt.Sprintf("%d=%s", fd, fpath)
+			fdField.Value = &pb.EventValue_Str{Str: fmt.Sprintf("%d=%s", fd, fpath)}
+		}
+	}
+
+	if dirfdField := GetFieldValue(data, "dirfd"); dirfdField != nil {
+		if dirfdVal, ok := dirfdField.Value.(*pb.EventValue_Int32); ok {
+			parseDirfdAt(dirfdField, uint64(dirfdVal.Int32))
 		}
 	}
 
 	return nil
 }
+
 */
 
-func GetArg(event *trace.Event, argName string) *trace.Argument {
-	for i := range event.Args {
-		if event.Args[i].Name == argName {
-			return &event.Args[i]
+// GetFieldValue returns the EventValue with the specified name from the data slice.
+// Returns nil if not found.
+func GetFieldValue(data []*pb.EventValue, name string) *pb.EventValue {
+	for i := range data {
+		if data[i].Name == name {
+			return data[i]
 		}
 	}
 	return nil
 }
 
+// GetArg returns the trace.Argument with the specified name from the args slice.
+// Returns nil if not found.
+// This function is kept for backwards compatibility with code that still uses trace.Argument.
+func GetArg(args []trace.Argument, argName string) *trace.Argument {
+	for i := range args {
+		if args[i].Name == argName {
+			return &args[i]
+		}
+	}
+
+	return nil
+}
+
+// SetArgValue sets the value of an argument by name in a trace.Event.
+// This function is kept for backwards compatibility with code that still uses trace.Argument.
 func SetArgValue(event *trace.Event, argName string, value any) error {
-	arg := GetArg(event, argName)
+	arg := GetArg(event.Args, argName)
 	if arg == nil {
 		return fmt.Errorf("event %s has no argument named %s", event.EventName, argName)
 	}
 	arg.Value = value
+	return nil
+}
+
+// NormalizeTimeArgs normalizes the time arguments of an event, converting them to
+// nanoseconds since the epoch.
+// This function is kept for backwards compatibility with code that still uses trace.Argument.
+func NormalizeTimeArgs(args []trace.Argument, timeArgNames []string) error {
+	for i := range timeArgNames {
+		arg := GetArg(args, timeArgNames[i])
+		if arg == nil {
+			return errfmt.Errorf("couldn't find argument %s", timeArgNames[i])
+		}
+		if arg.Value == nil {
+			continue
+		}
+
+		argTime, ok := arg.Value.(uint64)
+		if !ok {
+			return errfmt.Errorf("argument %s is not uint64, it is %T",
+				timeArgNames[i],
+				arg.Value,
+			)
+		}
+		arg.Value = timeutil.BootToEpochNS(argTime)
+	}
+
 	return nil
 }
 

@@ -142,7 +142,7 @@ func (self *listener) buildDerivationTable() map[events.ID][]derivedEvent {
 				derive.NetPacketHTTPResponse(), res)
 			result[eid] = res
 
-		case events.NetPacketFlow:
+		case events.NetPacketFlowBase:
 			res = self.maybeAddDerivation(events.NetFlowTCPBegin,
 				derive.NetFlowTCPBegin(self.dnscache), nil)
 			res = self.maybeAddDerivation(events.NetFlowTCPEnd,
@@ -161,7 +161,8 @@ func (self *listener) addDependency(eid events.ID) {
 		return
 	}
 
-	for _, dep := range desc.GetDependencies().GetIDs() {
+	for _, dep := range desc.GetDependencies().
+		GetPrimaryDependencies().GetIDs() {
 		_, pres := self.eid_monitored[eid]
 		if !pres {
 			continue
@@ -197,7 +198,7 @@ func (self *listener) feedDerivations(
 	}
 
 	for _, d := range derivations {
-		derived, _ := d.deriver(*event.tevent)
+		derived, _ := d.deriver(event.tevent)
 		for _, derived_event := range derived {
 			system_part := ordereddict.NewDict()
 			system_part.MergeFrom(event.System)

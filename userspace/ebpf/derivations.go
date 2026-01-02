@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/Velocidex/ordereddict"
-	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/derive"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 	"github.com/google/gopacket"
@@ -23,24 +22,6 @@ const (
 	familyIPv6
 )
 
-// parsePayloadArg returns the packet payload from the event.
-func parsePayloadArg(event *trace.Event, field string) ([]byte, error) {
-	payloadArg := events.GetArg(event, field)
-	if payloadArg == nil {
-		return nil, noPayloadError
-	}
-	payload, ok := payloadArg.Value.([]byte)
-	if !ok {
-		return nil, noPayloadError
-	}
-	payloadSize := len(payload)
-
-	if payloadSize < 1 {
-		return nil, noPayloadError
-	}
-	return payload, nil
-}
-
 // getLayer3TypeFlagFromEvent returns the layer 3 protocol type from a given event.
 func getLayer3TypeFlagFromEvent(event *trace.Event) (gopacket.LayerType, error) {
 	switch {
@@ -53,13 +34,13 @@ func getLayer3TypeFlagFromEvent(event *trace.Event) (gopacket.LayerType, error) 
 }
 
 func NetPacketParsedDeriver() derive.DeriveFunction {
-	return func(event trace.Event) ([]trace.Event, []error) {
-		payload, err := parsePayloadArg(&event, "data")
+	return func(event *trace.Event) ([]trace.Event, []error) {
+		payload, err := derive.ParsePayloadArg(event)
 		if err != nil {
 			return nil, []error{err}
 		}
 
-		layer3Type, err := getLayer3TypeFlagFromEvent(&event)
+		layer3Type, err := getLayer3TypeFlagFromEvent(event)
 		if err != nil {
 			return nil, []error{err}
 		}

@@ -58,8 +58,7 @@ typedef long unsigned int __kernel_ulong_t;
 
 typedef _Bool bool;
 
-enum
-{
+enum {
     false = 0,
     true = 1,
 };
@@ -72,28 +71,112 @@ struct thread_info {
     u32 status;
 };
 
+struct fred_cs {
+    /* CS selector */
+    u64 cs : 16,
+        /* Stack level at event time */
+        sl : 2,
+        /* IBT in WAIT_FOR_ENDBRANCH state */
+        wfe : 1, : 45;
+};
+
+struct fred_ss {
+    /* SS selector */
+    u64 ss : 16,
+        /* STI state */
+        sti : 1,
+        /* Set if syscall, sysenter or INT n */
+        swevent : 1,
+        /* Event is NMI type */
+        nmi : 1, : 13,
+        /* Event vector */
+        vector : 8, : 8,
+        /* Event type */
+        type : 4, : 4,
+        /* Event was incident to enclave execution */
+        enclave : 1,
+        /* CPU was in long mode */
+        lm : 1,
+        /*
+         * Nested exception during FRED delivery, not set
+         * for #DF.
+         */
+        nested : 1, : 1,
+        /*
+         * The length of the instruction causing the event.
+         * Only set for INTO, INT1, INT3, INT n, SYSCALL
+         * and SYSENTER.  0 otherwise.
+         */
+        insnlen : 4;
+};
+
 struct pt_regs {
-    long unsigned int r15;
-    long unsigned int r14;
-    long unsigned int r13;
-    long unsigned int r12;
-    long unsigned int bp;
-    long unsigned int bx;
-    long unsigned int r11;
-    long unsigned int r10;
-    long unsigned int r9;
-    long unsigned int r8;
-    long unsigned int ax;
-    long unsigned int cx;
-    long unsigned int dx;
-    long unsigned int si;
-    long unsigned int di;
-    long unsigned int orig_ax;
-    long unsigned int ip;
-    long unsigned int cs;
-    long unsigned int flags;
-    long unsigned int sp;
-    long unsigned int ss;
+    /*
+     * C ABI says these regs are callee-preserved. They aren't saved on
+     * kernel entry unless syscall needs a complete, fully filled
+     * "struct pt_regs".
+     */
+    unsigned long r15;
+    unsigned long r14;
+    unsigned long r13;
+    unsigned long r12;
+    unsigned long bp;
+    unsigned long bx;
+
+    /* These regs are callee-clobbered. Always saved on kernel entry. */
+    unsigned long r11;
+    unsigned long r10;
+    unsigned long r9;
+    unsigned long r8;
+    unsigned long ax;
+    unsigned long cx;
+    unsigned long dx;
+    unsigned long si;
+    unsigned long di;
+
+    /*
+     * orig_ax is used on entry for:
+     * - the syscall number (syscall, sysenter, int80)
+     * - error_code stored by the CPU on traps and exceptions
+     * - the interrupt number for device interrupts
+     *
+     * A FRED stack frame starts here:
+     *   1) It _always_ includes an error code;
+     *
+     *   2) The return frame for ERET[US] starts here, but
+     *      the content of orig_ax is ignored.
+     */
+    unsigned long orig_ax;
+
+    /* The IRETQ return frame starts here */
+    unsigned long ip;
+
+    union {
+        /* CS selector */
+        u16 cs;
+        /* The extended 64-bit data slot containing CS */
+        u64 csx;
+        /* The FRED CS extension */
+        struct fred_cs fred_cs;
+    };
+
+    unsigned long flags;
+    unsigned long sp;
+
+    union {
+        /* SS selector */
+        u16 ss;
+        /* The extended 64-bit data slot containing SS */
+        u64 ssx;
+        /* The FRED SS extension */
+        struct fred_ss fred_ss;
+    };
+
+    /*
+     * Top of stack on IDT systems, while FRED systems have extra fields
+     * defined above for storing exception related information, e.g. CR2 or
+     * DR6.
+     */
 };
 
 #elif defined(__TARGET_ARCH_arm64)
@@ -133,26 +216,26 @@ struct pt_regs {
 
 // common to all architectures
 
-enum
-{
+enum {
     BPF_ANY = 0,
     BPF_NOEXIST = 1,
     BPF_EXIST = 2,
     BPF_F_LOCK = 4,
 };
 
-enum
-{
+enum {
     BPF_F_USER_STACK = 256,
 };
 
-enum
-{
+enum {
+    BPF_F_MMAPABLE = 1024,
+};
+
+enum {
     BPF_F_CURRENT_CPU = 4294967295,
 };
 
-enum
-{
+enum {
     TCP_ESTABLISHED = 1,
     TCP_SYN_SENT = 2,
     TCP_SYN_RECV = 3,
@@ -168,8 +251,7 @@ enum
     TCP_MAX_STATES = 13,
 };
 
-enum sock_type
-{
+enum sock_type {
     SOCK_STREAM = 1,
     SOCK_DGRAM = 2,
     SOCK_RAW = 3,
@@ -179,8 +261,7 @@ enum sock_type
     SOCK_PACKET = 10,
 };
 
-enum
-{
+enum {
     IPPROTO_IP = 0,
     IPPROTO_ICMP = 1,
     IPPROTO_IGMP = 2,
@@ -211,8 +292,7 @@ enum
     IPPROTO_MAX = 263,
 };
 
-enum
-{
+enum {
     TCPF_ESTABLISHED = 2,
     TCPF_SYN_SENT = 4,
     TCPF_FIN_WAIT1 = 16,
@@ -293,8 +373,10 @@ struct task_struct {
     u64 start_boottime;
     u64 real_start_time;
     const struct cred *real_cred;
+    const struct cred *cred;
     char comm[16];
     struct files_struct *files;
+    struct fs_struct *fs;
     struct nsproxy *nsproxy;
     struct css_set *cgroups;
     struct signal_struct *signal;
@@ -415,6 +497,7 @@ struct uts_namespace {
 
 struct css_set {
     struct cgroup_subsys_state *subsys[12];
+    struct cgroup *dfl_cgrp;
 };
 
 struct percpu_ref {
@@ -472,12 +555,45 @@ struct path {
     struct dentry *dentry;
 };
 
+struct fs_struct {
+    struct path pwd;
+};
+
 typedef unsigned int fmode_t;
 
 struct dir_context {
 };
-struct iov_iter {
+
+enum iter_type {
+    /* iter types */
+    ITER_UBUF,
+    ITER_IOVEC,
+    ITER_BVEC,
+    ITER_KVEC,
+    ITER_FOLIOQ,
+    ITER_XARRAY,
+    ITER_DISCARD,
 };
+
+struct iov_iter {
+    unsigned int type; // iterator type (kernels <= 5.13)
+    u8 iter_type;      // iterator type (kernels >= 5.14)
+    size_t iov_offset;
+    union {
+        struct {
+            union {
+                const struct iovec *iov;   // iovec (kernels <= 6.3)
+                const struct iovec *__iov; // iovec (kernels >= 6.4)
+                void *ubuf;                // user pointer (kernels >= 6.0)
+            };
+            size_t count;
+        };
+    };
+    union {
+        unsigned long nr_segs;
+    };
+};
+
 struct kiocb {
 };
 
@@ -491,6 +607,7 @@ struct file {
     union {
         unsigned int f_iocb_flags;
     };
+    fmode_t f_mode;
     struct path f_path;
     struct inode *f_inode;
     const struct file_operations *f_op;
@@ -521,8 +638,7 @@ struct public_key_signature {
     const void *data;
 };
 
-enum zone_type
-{
+enum zone_type {
     ZONE_DMA,
 };
 
@@ -613,14 +729,16 @@ struct unix_sock {
     struct unix_address *addr;
 };
 
+#define UNIX_PATH_MAX 108
+
 struct sockaddr_un {
     __kernel_sa_family_t sun_family;
-    char sun_path[108];
+    char sun_path[UNIX_PATH_MAX];
 };
 
 struct unix_address {
     int len;
-    struct sockaddr_un name[0];
+    struct sockaddr_un name[];
 };
 
 struct ipv6_pinfo {
@@ -638,6 +756,7 @@ struct sockaddr_in6 {
 
 struct msghdr {
     void *msg_name;
+    struct iov_iter msg_iter;
 };
 
 typedef s64 ktime_t;
@@ -696,24 +815,59 @@ struct super_block {
     dev_t s_dev;
     struct file_system_type *s_type;
     unsigned long s_magic;
+    char s_id[32];
 };
 
 struct rb_root {
     struct rb_node *rb_node;
 };
 
+#if defined(__TARGET_ARCH_x86)
+    #define AT_VECTOR_SIZE_ARCH 3
+#elif defined(__TARGET_ARCH_arm64)
+    #define AT_VECTOR_SIZE_ARCH 2
+#else
+    #define AT_VECTOR_SIZE_ARCH 0
+#endif
+
+#define AT_VECTOR_SIZE_BASE 22
+#define AT_VECTOR_SIZE      (2 * (AT_VECTOR_SIZE_ARCH + AT_VECTOR_SIZE_BASE + 1))
+
 struct mm_struct {
     struct {
         struct rb_root mm_rb;
-        long unsigned int stack_vm;
-        long unsigned int start_brk;
-        long unsigned int brk;
-        long unsigned int start_stack;
-        long unsigned int arg_start;
-        long unsigned int arg_end;
-        long unsigned int env_start;
-        long unsigned int env_end;
+        unsigned long stack_vm;
+        unsigned long start_code;
+        unsigned long end_code;
+        unsigned long start_data;
+        unsigned long end_data;
+        unsigned long start_brk;
+        unsigned long brk;
+        unsigned long start_stack;
+        unsigned long arg_start;
+        unsigned long arg_end;
+        unsigned long env_start;
+        unsigned long env_end;
+        unsigned long saved_auxv[AT_VECTOR_SIZE];
+        struct file *exe_file;
     };
+};
+
+struct prctl_mm_map {
+    __u64 start_code;
+    __u64 end_code;
+    __u64 start_data;
+    __u64 end_data;
+    __u64 start_brk;
+    __u64 brk;
+    __u64 start_stack;
+    __u64 arg_start;
+    __u64 arg_end;
+    __u64 env_start;
+    __u64 env_end;
+    __u64 *auxv;
+    __u32 auxv_size;
+    __u32 exe_fd;
 };
 
 struct vfsmount {
@@ -748,8 +902,7 @@ struct dentry {
     struct inode *d_inode;
 };
 
-enum bpf_func_id
-{
+enum bpf_func_id {
     BPF_FUNC_probe_write_user = 36,
     BPF_FUNC_override_return = 58,
     BPF_FUNC_sk_storage_get = 107,
@@ -772,8 +925,7 @@ struct kset {
     struct list_head list;
 };
 
-enum mod_mem_type
-{
+enum mod_mem_type {
     MOD_TEXT = 0,
     MOD_DATA,
     MOD_RODATA,
@@ -851,13 +1003,11 @@ struct iovec {
     __kernel_size_t iov_len;
 };
 
-enum
-{
+enum {
     BPF_F_NO_PREALLOC = (1U << 0),
 };
 
-enum bpf_map_type
-{
+enum bpf_map_type {
     BPF_MAP_TYPE_UNSPEC = 0,
     BPF_MAP_TYPE_HASH = 1,
     BPF_MAP_TYPE_ARRAY = 2,
@@ -888,6 +1038,10 @@ enum bpf_map_type
     BPF_MAP_TYPE_RINGBUF = 27,
     BPF_MAP_TYPE_INODE_STORAGE = 28,
     BPF_MAP_TYPE_TASK_STORAGE = 29,
+    BPF_MAP_TYPE_BLOOM_FILTER = 30,
+    BPF_MAP_TYPE_USER_RINGBUF = 31,
+    BPF_MAP_TYPE_CGRP_STORAGE = 32,
+    BPF_MAP_TYPE_ARENA = 33,
 };
 
 struct bpf_map {
@@ -946,8 +1100,7 @@ struct ethhdr {
 
 typedef __u16 __sum16;
 
-enum kernel_read_file_id
-{
+enum kernel_read_file_id {
     READING_UNKNOWN = 0,
     READING_FIRMWARE = 1,
     READING_MODULE = 2,
@@ -989,14 +1142,12 @@ struct seq_operations {
     int (*show)(struct seq_file *m, void *v);
 };
 
-enum bpf_attach_type
-{
+enum bpf_attach_type {
     BPF_CGROUP_INET_INGRESS = 0,
     BPF_CGROUP_INET_EGRESS = 1,
 };
 
-enum bpf_hdr_start_off
-{
+enum bpf_hdr_start_off {
     BPF_HDR_START_MAC = 0,
     BPF_HDR_START_NET = 1,
 };
@@ -1023,8 +1174,7 @@ struct sighand_struct {
     struct k_sigaction action[_NSIG];
 };
 
-enum bpf_cmd
-{
+enum bpf_cmd {
     BPF_MAP_CREATE,
     BPF_MAP_LOOKUP_ELEM,
     BPF_MAP_UPDATE_ELEM,
@@ -1081,8 +1231,7 @@ union bpf_attr {
     } link_create;
 };
 
-enum bpf_prog_type
-{
+enum bpf_prog_type {
     BPF_PROG_TYPE_UNSPEC,
     BPF_PROG_TYPE_SOCKET_FILTER,
     BPF_PROG_TYPE_KPROBE,
@@ -1178,6 +1327,15 @@ struct trace_kprobe {
 
 struct perf_event {
     struct trace_event_call *tp_event;
+};
+
+// #if defined(CONFIG_KPROBE_EVENTS) || defined(CONFIG_UPROBE_EVENTS)
+enum perf_probe_config {
+    PERF_PROBE_CONFIG_IS_RETPROBE = 1U << 0,
+};
+
+// #ifdef CONFIG_UPROBES
+struct uprobe_task {
 };
 
 struct bpf_verifier_env {

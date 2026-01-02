@@ -1,9 +1,11 @@
-// Package trace defines the public types exported through the EBPF code and produced outwards from tracee-ebpf
+// Package trace defines the public types exported through the EBPF code and produced outwards from tracee
 package trace
 
 import (
 	"bytes"
+	b64 "encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,7 +14,7 @@ import (
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/protocol"
 )
 
-// Event is a single result of an ebpf event process. It is used as a payload later delivered to tracee-rules.
+// Event is a single result of an ebpf event process. It is used as a payload for signature evaluation.
 type Event struct {
 	Timestamp             int          `json:"timestamp"`
 	ThreadStartTime       int          `json:"threadStartTime"`
@@ -128,6 +130,11 @@ func (e Event) ToProtocol() protocol.Event {
 	}
 }
 
+// Type alias for data fields representing pointers.
+// uintptr is insufficient since it is architecture dependent.
+// Uint64 itself is irrepresentative of the purpose.
+type Pointer uint64
+
 // Argument holds the information for one argument
 type Argument struct {
 	ArgMeta
@@ -158,33 +165,42 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 	}
 	if num, isNum := arg.Value.(json.Number); isNum {
 		if strings.HasSuffix(arg.Type, "*") {
+			// Legacy case, convert to trace.Pointer
 			tmp, err := strconv.ParseUint(num.String(), 10, 64)
 			if err != nil {
 				return err
 			}
-			arg.Value = uint64(tmp)
+			arg.Type = "trace.Pointer"
+			arg.Value = Pointer(tmp)
 			return nil
 		}
 		switch arg.Type {
-		case "int", "pid_t", "uid_t", "gid_t", "mqd_t", "clockid_t", "const clockid_t", "key_t", "key_serial_t", "timer_t", "landlock_rule_type":
+		case "trace.Pointer":
+			// New case, output as is set to trace.Pointer
+			tmp, err := strconv.ParseUint(num.String(), 10, 64)
+			if err != nil {
+				return err
+			}
+			arg.Value = Pointer(tmp)
+		case "int32":
 			tmp, err := strconv.ParseInt(num.String(), 10, 32)
 			if err != nil {
 				return err
 			}
 			arg.Value = int32(tmp)
-		case "long":
+		case "int64":
 			tmp, err := num.Int64()
 			if err != nil {
 				return err
 			}
 			arg.Value = tmp
-		case "unsigned int", "u32", "mode_t", "dev_t":
+		case "uint32":
 			tmp, err := strconv.ParseUint(num.String(), 10, 32)
 			if err != nil {
 				return err
 			}
 			arg.Value = uint32(tmp)
-		case "unsigned long", "u64", "off_t", "size_t":
+		case "uint64":
 			tmp, err := strconv.ParseUint(num.String(), 10, 64)
 			if err != nil {
 				return err
@@ -196,13 +212,13 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 				return err
 			}
 			arg.Value = float32(tmp)
-		case "float64", "double":
+		case "float64":
 			tmp, err := num.Float64()
 			if err != nil {
 				return err
 			}
 			arg.Value = tmp
-		case "unsigned short", "old_uid_t", "old_gid_t", "umode_t", "u16", "uint16":
+		case "uint16":
 			tmp, err := strconv.ParseUint(num.String(), 10, 16)
 			if err != nil {
 				return err
@@ -214,7 +230,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 				return err
 			}
 			arg.Value = int8(tmp)
-		case "u8", "uint8":
+		case "uint8":
 			tmp, err := strconv.ParseUint(num.String(), 10, 8)
 			if err != nil {
 				return err
@@ -228,11 +244,11 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 	var err error
 
 	switch arg.Type {
-	case "const char*const*", "const char**":
+	case "[]string":
 		if arg.Value != nil {
 			argValue, ok := arg.Value.([]interface{})
 			if !ok {
-				return fmt.Errorf("const char*const*: type error")
+				return errors.New("[]string: type error")
 			}
 			arg.Value = jsonConvertToStringSlice(argValue)
 		} else {
@@ -243,7 +259,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			protoIPv4Map, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("protocol IPv4: type error")
+				return errors.New("protocol IPv4: type error")
 			}
 			argProtoIPv4, err = jsonConvertToProtoIPv4Arg(protoIPv4Map)
 			if err != nil {
@@ -257,7 +273,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			protoIPv6Map, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("protocol IPv6: type error")
+				return errors.New("protocol IPv6: type error")
 			}
 			argProtoIPv6, err = jsonConvertToProtoIPv6Arg(protoIPv6Map)
 			if err != nil {
@@ -271,7 +287,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			protoTCPMap, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("protocol TCP: type error")
+				return errors.New("protocol TCP: type error")
 			}
 			argProtoTCP, err = jsonConvertToProtoTCPArg(protoTCPMap)
 			if err != nil {
@@ -285,7 +301,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			protoUDPMap, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("protocol UDP: type error")
+				return errors.New("protocol UDP: type error")
 			}
 			argProtoUDP, err = jsonConvertToProtoUDPArg(protoUDPMap)
 			if err != nil {
@@ -299,7 +315,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			protoICMPMap, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("protocol ICMP: type error")
+				return errors.New("protocol ICMP: type error")
 			}
 			argProtoICMP, err = jsonConvertToProtoICMPArg(protoICMPMap)
 			if err != nil {
@@ -313,7 +329,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			protoICMPv6Map, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("protocol ICMPv6: type error")
+				return errors.New("protocol ICMPv6: type error")
 			}
 			argProtoICMPv6, err = jsonConvertToProtoICMPv6Arg(protoICMPv6Map)
 			if err != nil {
@@ -327,7 +343,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			argPktMetaMap, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("PktMeta: type error")
+				return errors.New("PktMeta: type error")
 			}
 			argPktMeta, err = jsonConvertToPktMetaArg(argPktMetaMap)
 			if err != nil {
@@ -341,7 +357,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			argProtoDnsMap, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("protocol DNS: type error")
+				return errors.New("protocol DNS: type error")
 			}
 			argProtoDNS, err = jsonConvertToProtoDNSArg(argProtoDnsMap)
 			if err != nil {
@@ -355,13 +371,13 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			argDnsQueryDataSlice, ok := arg.Value.([]interface{})
 			if !ok {
-				return fmt.Errorf("protocol Dns Query Data: type error")
+				return errors.New("protocol Dns Query Data: type error")
 			}
 
 			for _, dnsQueryDataElem := range argDnsQueryDataSlice {
 				argDnsQueryDataMap, ok := dnsQueryDataElem.(map[string]interface{})
 				if !ok {
-					return fmt.Errorf("protocol Dns Query Data: type error")
+					return errors.New("protocol Dns Query Data: type error")
 				}
 
 				dnsQuery, err := jsonConvertToDnsQuertDataType(argDnsQueryDataMap)
@@ -379,13 +395,13 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			argDnsResponseDataSlice, ok := arg.Value.([]interface{})
 			if !ok {
-				return fmt.Errorf("protocol Dns Response Data: type error")
+				return errors.New("protocol Dns Response Data: type error")
 			}
 
 			for _, dnsResponseDataElem := range argDnsResponseDataSlice {
 				dnsResponseDataMap, ok := dnsResponseDataElem.(map[string]interface{})
 				if !ok {
-					return fmt.Errorf("protocol Dns Response Data: type error")
+					return errors.New("protocol Dns Response Data: type error")
 				}
 
 				dnsResponseData, err := jsonConvertToDnsResponseDataType(dnsResponseDataMap)
@@ -403,7 +419,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			argProtoHTTPMap, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("protocol HTTP: type error")
+				return errors.New("protocol HTTP: type error")
 			}
 			argProtoHTTP, err = jsonConvertToProtoHTTPArg(argProtoHTTPMap)
 			if err != nil {
@@ -417,7 +433,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			argProtoHTTPRequestMap, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("protocol HTTP Request: type error")
+				return errors.New("protocol HTTP Request: type error")
 			}
 			argProtoHTTPRequest, err = jsonConvertToProtoHTTPRequestArg(argProtoHTTPRequestMap)
 			if err != nil {
@@ -431,7 +447,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			argProtoHTTPResponseMap, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("protocol HTTP Response: type error")
+				return errors.New("protocol HTTP Response: type error")
 			}
 			argProtoHTTPResponse, err = jsonConvertToProtoHTTPResponseArg(argProtoHTTPResponseMap)
 			if err != nil {
@@ -445,10 +461,7 @@ func (arg *Argument) UnmarshalJSON(b []byte) error {
 		if arg.Value != nil {
 			argPacketMetadataMap, ok := arg.Value.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("packet metadata: type error")
-			}
-			if err != nil {
-				return err
+				return errors.New("packet metadata: type error")
 			}
 			argPacketMetadata, err = jsonConvertToPacketMetadata(argPacketMetadataMap)
 			if err != nil {
@@ -746,20 +759,20 @@ func jsonConvertToProtoDNSArg(argMap map[string]interface{}) (ProtoDNS, error) {
 	// questions conversion
 	questions, exists := argMap["questions"]
 	if !exists {
-		return ProtoDNS{}, fmt.Errorf("questions not found in ProtoDNS arg")
+		return ProtoDNS{}, errors.New("questions not found in ProtoDNS arg")
 	}
 
 	var dnsQuestions []ProtoDNSQuestion
 	if questions != nil {
 		questionsSlice, ok := questions.([]interface{})
 		if !ok {
-			return ProtoDNS{}, fmt.Errorf("questions from ProtoDNS: type error")
+			return ProtoDNS{}, errors.New("questions from ProtoDNS: type error")
 		}
 
 		for _, questionsElem := range questionsSlice {
 			questionsElemMap, ok := questionsElem.(map[string]interface{})
 			if !ok {
-				return ProtoDNS{}, fmt.Errorf("questions from ProtoDNS: type error")
+				return ProtoDNS{}, errors.New("questions from ProtoDNS: type error")
 			}
 
 			question, err := jsonConvertToProtoDNSQuestionType(questionsElemMap)
@@ -774,20 +787,20 @@ func jsonConvertToProtoDNSArg(argMap map[string]interface{}) (ProtoDNS, error) {
 	// answers conversion
 	answers, exists := argMap["answers"]
 	if !exists {
-		return ProtoDNS{}, fmt.Errorf("answers not found in ProtoDNS arg")
+		return ProtoDNS{}, errors.New("answers not found in ProtoDNS arg")
 	}
 
 	var dnsAnswers []ProtoDNSResourceRecord
 	if answers != nil {
 		answersSlice, ok := answers.([]interface{})
 		if !ok {
-			return ProtoDNS{}, fmt.Errorf("answers from ProtoDNS: type error")
+			return ProtoDNS{}, errors.New("answers from ProtoDNS: type error")
 		}
 
 		for _, answersElem := range answersSlice {
 			answersElemMap, ok := answersElem.(map[string]interface{})
 			if !ok {
-				return ProtoDNS{}, fmt.Errorf("answers from ProtoDNS: type error")
+				return ProtoDNS{}, errors.New("answers from ProtoDNS: type error")
 			}
 
 			answer, err := jsonConvertToProtoDNSResourceRecordType(answersElemMap)
@@ -802,20 +815,20 @@ func jsonConvertToProtoDNSArg(argMap map[string]interface{}) (ProtoDNS, error) {
 	// authorities conversion
 	authorities, exists := argMap["authorities"]
 	if !exists {
-		return ProtoDNS{}, fmt.Errorf("authorities not found in ProtoDNS arg")
+		return ProtoDNS{}, errors.New("authorities not found in ProtoDNS arg")
 	}
 
 	var dnsAuthorities []ProtoDNSResourceRecord
 	if authorities != nil {
 		authoritiesSlice, ok := authorities.([]interface{})
 		if !ok {
-			return ProtoDNS{}, fmt.Errorf("authorities from ProtoDNS: type error")
+			return ProtoDNS{}, errors.New("authorities from ProtoDNS: type error")
 		}
 
 		for _, authoritiesElem := range authoritiesSlice {
 			authoritiesElemMap, ok := authoritiesElem.(map[string]interface{})
 			if !ok {
-				return ProtoDNS{}, fmt.Errorf("authorities from ProtoDNS: type error")
+				return ProtoDNS{}, errors.New("authorities from ProtoDNS: type error")
 			}
 
 			authority, err := jsonConvertToProtoDNSResourceRecordType(authoritiesElemMap)
@@ -830,20 +843,20 @@ func jsonConvertToProtoDNSArg(argMap map[string]interface{}) (ProtoDNS, error) {
 	// additionals conversion
 	additionals, exists := argMap["additionals"]
 	if !exists {
-		return ProtoDNS{}, fmt.Errorf("additionals not found in ProtoDNS arg")
+		return ProtoDNS{}, errors.New("additionals not found in ProtoDNS arg")
 	}
 
 	var dnsAdditionals []ProtoDNSResourceRecord
 	if additionals != nil {
 		additionalsSlice, ok := additionals.([]interface{})
 		if !ok {
-			return ProtoDNS{}, fmt.Errorf("additionals from ProtoDNS: type error")
+			return ProtoDNS{}, errors.New("additionals from ProtoDNS: type error")
 		}
 
 		for _, additionalsElem := range additionalsSlice {
 			additionalsElemMap, ok := additionalsElem.(map[string]interface{})
 			if !ok {
-				return ProtoDNS{}, fmt.Errorf("additionals from ProtoDNS: type error")
+				return ProtoDNS{}, errors.New("additionals from ProtoDNS: type error")
 			}
 
 			additional, err := jsonConvertToProtoDNSResourceRecordType(additionalsElemMap)
@@ -924,33 +937,30 @@ func jsonConvertToProtoDNSResourceRecordType(argMap map[string]interface{}) (Pro
 	// []string conversion
 	txts, exists := argMap["TXTs"]
 	if !exists {
-		return ProtoDNSResourceRecord{}, fmt.Errorf("TXTs not found in ProtoDNSResourceRecord arg")
+		return ProtoDNSResourceRecord{}, errors.New("TXTs not found in ProtoDNSResourceRecord arg")
 	}
 
 	var txtsValue []string
 	if txts != nil {
 		txtsInterfaceSlice, ok := txts.([]interface{})
 		if !ok {
-			return ProtoDNSResourceRecord{}, fmt.Errorf("TXTs from ProtoDNSResourceRecord: type error")
+			return ProtoDNSResourceRecord{}, errors.New("TXTs from ProtoDNSResourceRecord: type error")
 		}
 
 		txtsValue = jsonConvertToStringSlice(txtsInterfaceSlice)
-		if err != nil {
-			return ProtoDNSResourceRecord{}, err
-		}
 	}
 
 	// SOA conversion
 	soa, exists := argMap["SOA"]
 	if !exists {
-		return ProtoDNSResourceRecord{}, fmt.Errorf("SOA not found in ProtoDNSResourceRecord arg")
+		return ProtoDNSResourceRecord{}, errors.New("SOA not found in ProtoDNSResourceRecord arg")
 	}
 
 	var protoDNSSOA ProtoDNSSOA
 	if soa != nil {
 		soaMap, ok := soa.(map[string]interface{})
 		if !ok {
-			return ProtoDNSResourceRecord{}, fmt.Errorf("SOA from ProtoDNSResourceRecord: type error")
+			return ProtoDNSResourceRecord{}, errors.New("SOA from ProtoDNSResourceRecord: type error")
 		}
 
 		protoDNSSOA, err = jsonConvertToProtoDNSSOAType(soaMap)
@@ -962,14 +972,14 @@ func jsonConvertToProtoDNSResourceRecordType(argMap map[string]interface{}) (Pro
 	// SRV conversion
 	srv, exists := argMap["SRV"]
 	if !exists {
-		return ProtoDNSResourceRecord{}, fmt.Errorf("SRV not found in ProtoDNSResourceRecord arg")
+		return ProtoDNSResourceRecord{}, errors.New("SRV not found in ProtoDNSResourceRecord arg")
 	}
 
 	var protoDNSSRV ProtoDNSSRV
 	if srv != nil {
 		srvMap, ok := srv.(map[string]interface{})
 		if !ok {
-			return ProtoDNSResourceRecord{}, fmt.Errorf("SRV from ProtoDNSResourceRecord: type error")
+			return ProtoDNSResourceRecord{}, errors.New("SRV from ProtoDNSResourceRecord: type error")
 		}
 
 		protoDNSSRV, err = jsonConvertToProtoDNSSRVType(srvMap)
@@ -981,14 +991,14 @@ func jsonConvertToProtoDNSResourceRecordType(argMap map[string]interface{}) (Pro
 	// MX conversion
 	mx, exists := argMap["MX"]
 	if !exists {
-		return ProtoDNSResourceRecord{}, fmt.Errorf("MX not found in ProtoDNSResourceRecord arg")
+		return ProtoDNSResourceRecord{}, errors.New("MX not found in ProtoDNSResourceRecord arg")
 	}
 
 	var protoDNSMX ProtoDNSMX
 	if mx != nil {
 		mxMap, ok := mx.(map[string]interface{})
 		if !ok {
-			return ProtoDNSResourceRecord{}, fmt.Errorf("MX from ProtoDNSResourceRecord: type error")
+			return ProtoDNSResourceRecord{}, errors.New("MX from ProtoDNSResourceRecord: type error")
 		}
 
 		protoDNSMX, err = jsonConvertToProtoDNSMXType(mxMap)
@@ -1000,20 +1010,20 @@ func jsonConvertToProtoDNSResourceRecordType(argMap map[string]interface{}) (Pro
 	// OPT conversion
 	opt, exists := argMap["OPT"]
 	if !exists {
-		return ProtoDNSResourceRecord{}, fmt.Errorf("OPT not found in ProtoDNSResourceRecord arg")
+		return ProtoDNSResourceRecord{}, errors.New("OPT not found in ProtoDNSResourceRecord arg")
 	}
 
 	var dnsOpts []ProtoDNSOPT
 	if opt != nil {
 		optSlice, ok := opt.([]interface{})
 		if !ok {
-			return ProtoDNSResourceRecord{}, fmt.Errorf("OPT from ProtoDNSResourceRecord: type error")
+			return ProtoDNSResourceRecord{}, errors.New("OPT from ProtoDNSResourceRecord: type error")
 		}
 
 		for _, optElem := range optSlice {
 			optElemMap, ok := optElem.(map[string]interface{})
 			if !ok {
-				return ProtoDNSResourceRecord{}, fmt.Errorf("OPT from ProtoDNSResourceRecord: type error")
+				return ProtoDNSResourceRecord{}, errors.New("OPT from ProtoDNSResourceRecord: type error")
 			}
 
 			dnsOpt, err := jsonConvertToProtoDNSOPTType(optElemMap)
@@ -1028,14 +1038,14 @@ func jsonConvertToProtoDNSResourceRecordType(argMap map[string]interface{}) (Pro
 	// URI conversion
 	uri, exists := argMap["URI"]
 	if !exists {
-		return ProtoDNSResourceRecord{}, fmt.Errorf("URI not found in ProtoDNSResourceRecord arg")
+		return ProtoDNSResourceRecord{}, errors.New("URI not found in ProtoDNSResourceRecord arg")
 	}
 
 	var protoDNSURI ProtoDNSURI
 	if uri != nil {
 		uriMap, ok := uri.(map[string]interface{})
 		if !ok {
-			return ProtoDNSResourceRecord{}, fmt.Errorf("URI from ProtoDNSResourceRecord: type error")
+			return ProtoDNSResourceRecord{}, errors.New("URI from ProtoDNSResourceRecord: type error")
 		}
 
 		protoDNSURI, err = jsonConvertToProtoDNSURIType(uriMap)
@@ -1252,14 +1262,14 @@ func jsonConvertToDnsResponseDataType(argMap map[string]interface{}) (DnsRespons
 
 	queryData, exists := argMap["query_data"]
 	if !exists {
-		return DnsResponseData{}, fmt.Errorf("query_data not found in DnsResponseData arg")
+		return DnsResponseData{}, errors.New("query_data not found in DnsResponseData arg")
 	}
 
 	var dnsQuery DnsQueryData
 	if queryData != nil {
 		queryDataMap, ok := queryData.(map[string]interface{})
 		if !ok {
-			return DnsResponseData{}, fmt.Errorf("query_data from DnsResponseData: type error")
+			return DnsResponseData{}, errors.New("query_data from DnsResponseData: type error")
 		}
 
 		var err error
@@ -1273,20 +1283,20 @@ func jsonConvertToDnsResponseDataType(argMap map[string]interface{}) (DnsRespons
 
 	dnsAnswer, exists := argMap["dns_answer"]
 	if !exists {
-		return DnsResponseData{}, fmt.Errorf("dns_answer not found in DnsResponseData arg")
+		return DnsResponseData{}, errors.New("dns_answer not found in DnsResponseData arg")
 	}
 
 	var dnsAnswers []DnsAnswer
 	if dnsAnswer != nil {
 		dnsAnswerSlice, ok := dnsAnswer.([]interface{})
 		if !ok {
-			return DnsResponseData{}, fmt.Errorf("dns_answer from DnsResponseData: type error")
+			return DnsResponseData{}, errors.New("dns_answer from DnsResponseData: type error")
 		}
 
 		for _, dnsAnswerElem := range dnsAnswerSlice {
 			dnsAnswerElemMap, ok := dnsAnswerElem.(map[string]interface{})
 			if !ok {
-				return DnsResponseData{}, fmt.Errorf("dns_answer from DnsResponseData: type error")
+				return DnsResponseData{}, errors.New("dns_answer from DnsResponseData: type error")
 			}
 
 			dnsAns, err := jsonConvertToDnsAnswerType(dnsAnswerElemMap)
@@ -1813,4 +1823,391 @@ func (readType KernelReadType) String() string {
 		return "x509-certificate"
 	}
 	return "unknown"
+}
+
+//
+// Argument Extraction Functions
+//
+
+// ArgVal extracts an argument value with generic type checking from a slice of Arguments.
+// It searches for an argument with the specified name and attempts to cast its value to type T.
+//
+// Parameters:
+//   - args: slice of Arguments to search through
+//   - argName: name of the argument to find
+//
+// Returns:
+//   - T: the argument value cast to the specified type
+//   - error: if argument not found or type assertion fails
+func ArgVal[T any](args []Argument, argName string) (T, error) {
+	for _, arg := range args {
+		if arg.Name == argName {
+			val, ok := arg.Value.(T)
+			if !ok {
+				zeroVal := *new(T)
+				return zeroVal, fmt.Errorf(
+					"argument %s is not of type %T, is of type %T",
+					argName,
+					zeroVal,
+					arg.Value,
+				)
+			}
+			return val, nil
+		}
+	}
+	return *new(T), fmt.Errorf("argument %s not found", argName)
+}
+
+// GetArgOps represents options for arguments getters
+type GetArgOps struct {
+	DefaultArgs bool // Receive default args value (value equals 'nil'). If set to false, will return error if arg not initialized.
+}
+
+// GetArgumentByName fetches the argument in event with `Name` that matches argName
+func (e Event) GetArgumentByName(argName string, opts GetArgOps) (Argument, error) {
+	for _, arg := range e.Args {
+		if arg.Name == argName {
+			if !opts.DefaultArgs && arg.Value == nil {
+				return arg, fmt.Errorf("argument %s is not initialized", argName)
+			}
+			return arg, nil
+		}
+	}
+	return Argument{}, fmt.Errorf("argument %s not found", argName)
+}
+
+// getTypedArgumentByName is a generic helper that retrieves and type-asserts an argument value
+func getTypedArgumentByName[T any](e Event, argName string) (T, error) {
+	var zero T
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return zero, err
+	}
+	val, ok := arg.Value.(T)
+	if ok {
+		return val, nil
+	}
+	return zero, fmt.Errorf("can't convert argument %v to %T (argument is of type %T)", argName, zero, arg.Value)
+}
+
+// GetStringArgumentByName retrieves the argument from the event's "Args" field
+// that matches the specified "argName". The argument value is returned cast as a string.
+func (e Event) GetStringArgumentByName(argName string) (string, error) {
+	return getTypedArgumentByName[string](e, argName)
+}
+
+// GetIntArgumentByName retrieves the argument from the event's "Args" field
+// that matches the specified "argName". The argument value is returned cast as an int.
+// Supports int, int32, and int64 argument types.
+func (e Event) GetIntArgumentByName(argName string) (int, error) {
+	// Try int, int32, int64 in order
+	if v, err := getTypedArgumentByName[int](e, argName); err == nil {
+		return v, nil
+	}
+	if v, err := getTypedArgumentByName[int32](e, argName); err == nil {
+		return int(v), nil
+	}
+	if v, err := getTypedArgumentByName[int64](e, argName); err == nil {
+		return int(v), nil
+	}
+
+	arg, _ := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	return 0, fmt.Errorf("can't convert argument %v to int (argument is of type %T)", argName, arg.Value)
+}
+
+// GetUintArgumentByName gets the argument matching the "argName" given from the event "Args" field, casted as uint.
+// Supports uint, uint32, and uint64 argument types.
+func (e Event) GetUintArgumentByName(argName string) (uint, error) {
+	// Try uint, uint32, uint64 in order
+	if v, err := getTypedArgumentByName[uint](e, argName); err == nil {
+		return v, nil
+	}
+	if v, err := getTypedArgumentByName[uint32](e, argName); err == nil {
+		return uint(v), nil
+	}
+	if v, err := getTypedArgumentByName[uint64](e, argName); err == nil {
+		return uint(v), nil
+	}
+
+	arg, _ := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	return 0, fmt.Errorf("can't convert argument %v to uint (argument is of type %T)", argName, arg.Value)
+}
+
+// GetSliceStringArgumentByName retrieves the argument from the event's "Args" field
+// that matches the specified "argName". The argument value is returned cast as a []string.
+func (e Event) GetSliceStringArgumentByName(argName string) ([]string, error) {
+	return getTypedArgumentByName[[]string](e, argName)
+}
+
+// GetBytesSliceArgumentByName retrieves the argument from the event's "Args" field
+// that matches the specified "argName". The argument value is returned cast as a []byte.
+func (e Event) GetBytesSliceArgumentByName(argName string) ([]byte, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return nil, err
+	}
+	argBytes, ok := arg.Value.([]byte)
+	if ok {
+		return argBytes, nil
+	}
+
+	argBytesString, ok := arg.Value.(string)
+	if ok {
+		decodedBytes, err := b64.StdEncoding.DecodeString(argBytesString)
+		if err != nil {
+			return nil, fmt.Errorf("can't convert argument %v to []bytes", argName)
+		}
+		return decodedBytes, nil
+	}
+
+	return nil, fmt.Errorf("can't convert argument %v to []bytes", argName)
+}
+
+// GetRawAddrArgumentByName returns map[string]string of addr argument
+func (e Event) GetRawAddrArgumentByName(argName string) (map[string]string, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return nil, err
+	}
+	addr, isOk := arg.Value.(map[string]string)
+	if !isOk {
+		addr = make(map[string]string)
+		stringInterMap, isStringInterMap := arg.Value.(map[string]interface{})
+		if !isStringInterMap {
+			return addr, errors.New("couldn't convert arg to addr")
+		}
+		for k, v := range stringInterMap {
+			s, isString := v.(string)
+			if !isString {
+				return addr, errors.New("couldn't convert arg to addr")
+			}
+			addr[k] = s
+		}
+	}
+
+	return addr, nil
+}
+
+// GetHookedSymbolDataArgumentByName returns []HookedSymbolData of hooked symbols for arg
+func (e Event) GetHookedSymbolDataArgumentByName(argName string) ([]HookedSymbolData, error) {
+	hookedSymbolsPtr, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return []HookedSymbolData{}, err
+	}
+
+	var hookedSymbols []HookedSymbolData
+
+	hookedSymbols, ok := hookedSymbolsPtr.Value.([]HookedSymbolData)
+	if ok {
+		return hookedSymbols, nil
+	}
+
+	argSlice, ok := hookedSymbolsPtr.Value.([]interface{})
+	if ok {
+		for _, v := range argSlice {
+			hookedSymbol, err := parseHookedSymbolData(v)
+			if err != nil {
+				continue
+			}
+			hookedSymbols = append(hookedSymbols, hookedSymbol)
+		}
+		return hookedSymbols, nil
+	}
+
+	return hookedSymbols, fmt.Errorf("can't convert argument %v to []HookedSymbolData", argName)
+}
+
+// parseHookedSymbolData generates a HookedSymbolData from interface{} got from event arg
+func parseHookedSymbolData(v interface{}) (HookedSymbolData, error) {
+	symbol := HookedSymbolData{}
+
+	hookedSymbolMap, ok := v.(map[string]interface{})
+	if !ok {
+		return symbol, errors.New("can't convert hooked symbol to map[string]interface{}")
+	}
+
+	for key, value := range hookedSymbolMap {
+		strValue, ok := value.(string)
+		if !ok {
+			continue
+		}
+		switch key {
+		case "ModuleOwner":
+			symbol.ModuleOwner = strValue
+
+		case "SymbolName":
+			symbol.SymbolName = strValue
+		}
+	}
+
+	return symbol, nil
+}
+
+//
+// Protocol Extraction Functions
+//
+
+// GetPacketMetadata extracts PacketMetadata from an event argument
+func (e Event) GetPacketMetadata(argName string) (PacketMetadata, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return PacketMetadata{}, err
+	}
+
+	argPacketMetadata, ok := arg.Value.(PacketMetadata)
+	if ok {
+		return argPacketMetadata, nil
+	}
+
+	return PacketMetadata{}, fmt.Errorf("packet metadata: type error (should be PacketMetadata, is %T)", arg.Value)
+}
+
+// GetProtoIPv4ByName extracts ProtoIPv4 from an event argument
+func (e Event) GetProtoIPv4ByName(argName string) (ProtoIPv4, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return ProtoIPv4{}, err
+	}
+
+	argProtoIPv4, ok := arg.Value.(ProtoIPv4)
+	if ok {
+		return argProtoIPv4, nil
+	}
+
+	return ProtoIPv4{}, fmt.Errorf("protocol IPv4: type error (should be ProtoIPv4, is %T)", arg.Value)
+}
+
+// GetProtoIPv6ByName extracts ProtoIPv6 from an event argument
+func (e Event) GetProtoIPv6ByName(argName string) (ProtoIPv6, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return ProtoIPv6{}, err
+	}
+
+	argProtoIPv6, ok := arg.Value.(ProtoIPv6)
+	if ok {
+		return argProtoIPv6, nil
+	}
+
+	return ProtoIPv6{}, fmt.Errorf("protocol IPv6: type error (should be ProtoIPv6, is %T)", arg.Value)
+}
+
+// GetProtoUDPByName extracts ProtoUDP from an event argument
+func (e Event) GetProtoUDPByName(argName string) (ProtoUDP, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return ProtoUDP{}, err
+	}
+
+	argProtoUDP, ok := arg.Value.(ProtoUDP)
+	if ok {
+		return argProtoUDP, nil
+	}
+
+	return ProtoUDP{}, fmt.Errorf("protocol UDP: type error (should be ProtoUDP, is %T)", arg.Value)
+}
+
+// GetProtoTCPByName extracts ProtoTCP from an event argument
+func (e Event) GetProtoTCPByName(argName string) (ProtoTCP, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return ProtoTCP{}, err
+	}
+
+	argProtoTCP, ok := arg.Value.(ProtoTCP)
+	if ok {
+		return argProtoTCP, nil
+	}
+
+	return ProtoTCP{}, fmt.Errorf("protocol TCP: type error (should be ProtoTCP, is %T)", arg.Value)
+}
+
+// GetProtoICMPByName extracts ProtoICMP from an event argument
+func (e Event) GetProtoICMPByName(argName string) (ProtoICMP, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return ProtoICMP{}, err
+	}
+
+	argProtoICMP, ok := arg.Value.(ProtoICMP)
+	if ok {
+		return argProtoICMP, nil
+	}
+
+	return ProtoICMP{}, fmt.Errorf("protocol ICMP: type error (should be ProtoICMP, is %T)", arg.Value)
+}
+
+// GetProtoICMPv6ByName extracts ProtoICMPv6 from an event argument
+func (e Event) GetProtoICMPv6ByName(argName string) (ProtoICMPv6, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return ProtoICMPv6{}, err
+	}
+
+	argProtoICMPv6, ok := arg.Value.(ProtoICMPv6)
+	if ok {
+		return argProtoICMPv6, nil
+	}
+
+	return ProtoICMPv6{}, fmt.Errorf("protocol ICMPv6: type error (should be ProtoICMPv6, is %T)", arg.Value)
+}
+
+// GetProtoDNSByName extracts ProtoDNS from an event argument
+func (e Event) GetProtoDNSByName(argName string) (ProtoDNS, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return ProtoDNS{}, err
+	}
+
+	argProtoDNS, ok := arg.Value.(ProtoDNS)
+	if ok {
+		return argProtoDNS, nil
+	}
+
+	return ProtoDNS{}, fmt.Errorf("protocol DNS: type error (should be ProtoDNS, is %T)", arg.Value)
+}
+
+// GetProtoHTTPByName extracts ProtoHTTP from an event argument
+func (e Event) GetProtoHTTPByName(argName string) (ProtoHTTP, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return ProtoHTTP{}, err
+	}
+
+	argProtoHTTP, ok := arg.Value.(ProtoHTTP)
+	if ok {
+		return argProtoHTTP, nil
+	}
+
+	return ProtoHTTP{}, fmt.Errorf("protocol HTTP: type error (should be ProtoHTTP, is %T)", arg.Value)
+}
+
+// GetProtoHTTPRequestByName extracts ProtoHTTPRequest from an event argument
+func (e Event) GetProtoHTTPRequestByName(argName string) (ProtoHTTPRequest, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return ProtoHTTPRequest{}, err
+	}
+
+	argProtoHTTPRequest, ok := arg.Value.(ProtoHTTPRequest)
+	if ok {
+		return argProtoHTTPRequest, nil
+	}
+
+	return ProtoHTTPRequest{}, fmt.Errorf("protocol HTTP (request): type error (should be ProtoHTTPRequest, is %T)", arg.Value)
+}
+
+// GetProtoHTTPResponseByName extracts ProtoHTTPResponse from an event argument
+func (e Event) GetProtoHTTPResponseByName(argName string) (ProtoHTTPResponse, error) {
+	arg, err := e.GetArgumentByName(argName, GetArgOps{DefaultArgs: false})
+	if err != nil {
+		return ProtoHTTPResponse{}, err
+	}
+
+	argProtoHTTPResponse, ok := arg.Value.(ProtoHTTPResponse)
+	if ok {
+		return argProtoHTTPResponse, nil
+	}
+
+	return ProtoHTTPResponse{}, fmt.Errorf("protocol HTTP (response): type error (should be ProtoHTTPResponse, is %T)", arg.Value)
 }

@@ -16,6 +16,8 @@ var (
 		"events", "One or more events to show").Strings()
 
 	dump_command_sets = dump_command.Flag("sets", "Specify events as sets").Bool()
+
+	dump_command_policy = dump_command.Flag("policy", "Policy to load").String()
 )
 
 func doDump() {
@@ -71,7 +73,11 @@ func doDump() {
 	}
 	defer manager.Close()
 
-	output_chan, closer, err := manager.Watch(ctx, selected_events)
+	opts := ebpf.EBPFWatchOptions{
+		SelectedEvents: selected_events,
+	}
+
+	output_chan, closer, err := manager.Watch(ctx, opts)
 	if err != nil {
 		logger.Error("Watch: %v", err)
 		return

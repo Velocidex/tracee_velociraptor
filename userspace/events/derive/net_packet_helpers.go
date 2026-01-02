@@ -3,12 +3,12 @@ package derive
 import (
 	"bufio"
 	"bytes"
-	"fmt"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
 
-	"github.com/Velocidex/tracee_velociraptor/userspace/dnscache"
+	dns "github.com/Velocidex/tracee_velociraptor/userspace/dnscache"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
@@ -80,8 +80,8 @@ func strToLower(given string) string {
 }
 
 // parsePayloadArg returns the packet payload from the event.
-func parsePayloadArg(event *trace.Event) ([]byte, error) {
-	payloadArg := events.GetArg(event, "payload")
+func ParsePayloadArg(event *trace.Event) ([]byte, error) {
+	payloadArg := events.GetArg(event.Args, "payload")
 	if payloadArg == nil {
 		return nil, noPayloadError()
 	}
@@ -110,10 +110,16 @@ func getPktMeta(srcIP, dstIP net.IP, srcPort, dstPort uint16, proto uint8, lengt
 	}
 }
 
+// revive:disable:function-result-limit
+// revive:disable:confusing-results
+
 // swapSrcDst swaps the source and destination IP addresses and ports.
 func swapSrcDst(s, d net.IP, sp, dp uint16) (net.IP, net.IP, uint16, uint16) {
 	return d, s, dp, sp
 }
+
+// revive:enable:confusing-results
+// revive:enable:function-result-limit
 
 // getPacketDirection returns the packet direction from the event.
 func getPacketDirection(event *trace.Event) trace.PacketDirection {
@@ -139,7 +145,7 @@ func getPacketHTTPDirection(event *trace.Event) int {
 
 // createPacketFromEvent creates a gopacket.Packet from the event.
 func createPacketFromEvent(event *trace.Event) (gopacket.Packet, error) {
-	payload, err := parsePayloadArg(event)
+	payload, err := ParsePayloadArg(event)
 	if err != nil {
 		return nil, err
 	}
@@ -165,13 +171,13 @@ func createPacketFromEvent(event *trace.Event) (gopacket.Packet, error) {
 }
 
 // getDomainsFromCache returns the domain names of an IP address from the DNS cache.
-func getDomainsFromCache(ip net.IP, cache *dnscache.DNSCache) []string {
+func getDomainsFromCache(ip net.IP, cache *dns.DNSCache) []string {
 	domains := []string{}
 	if cache != nil {
 		query, err := cache.Get(ip.String())
 		if err != nil {
 			switch err {
-			case dnscache.ErrDNSRecordNotFound, dnscache.ErrDNSRecordExpired:
+			case dns.ErrDNSRecordNotFound, dns.ErrDNSRecordExpired:
 				domains = []string{}
 			default:
 				logger.Debugw("ip lookup error", "ip", ip, "error", err)
@@ -195,7 +201,7 @@ func getLayer3FromPacket(packet gopacket.Packet) (gopacket.NetworkLayer, error) 
 	case (*layers.IPv4):
 	case (*layers.IPv6):
 	default:
-		return nil, fmt.Errorf("wrong layer 3 protocol type")
+		return nil, errors.New("wrong layer 3 protocol type")
 	}
 	return layer3, nil
 }
@@ -208,7 +214,7 @@ func getLayer3IPv4FromPacket(packet gopacket.Packet) (*layers.IPv4, error) {
 	}
 	ipv4, ok := layer3.(*layers.IPv4)
 	if !ok {
-		return nil, fmt.Errorf("wrong layer 3 protocol type")
+		return nil, errors.New("wrong layer 3 protocol type")
 	}
 	return ipv4, nil
 }
@@ -221,10 +227,12 @@ func getLayer3IPv6FromPacket(packet gopacket.Packet) (*layers.IPv6, error) {
 	}
 	ipv6, ok := layer3.(*layers.IPv6)
 	if !ok {
-		return nil, fmt.Errorf("wrong layer 3 protocol type")
+		return nil, errors.New("wrong layer 3 protocol type")
 	}
 	return ipv6, nil
 }
+
+// revive:disable:confusing-results
 
 // getSrcDstFromLayer3 returns the source and destination IP addresses from the layer 3.
 func getSrcDstFromLayer3(layer3 gopacket.NetworkLayer) (net.IP, net.IP, error) {
@@ -234,8 +242,12 @@ func getSrcDstFromLayer3(layer3 gopacket.NetworkLayer) (net.IP, net.IP, error) {
 	case (*layers.IPv6):
 		return v.SrcIP, v.DstIP, nil
 	}
-	return nil, nil, fmt.Errorf("wrong layer 3 protocol type")
+	return nil, nil, errors.New("wrong layer 3 protocol type")
 }
+
+// revive:enable:confusing-results
+
+// revive:disable:confusing-results
 
 // getLayer3SrcDstFromPacket returns the source and destination IP addresses from the packet.
 func getLayer3SrcDstFromPacket(packet gopacket.Packet) (net.IP, net.IP, error) {
@@ -246,6 +258,8 @@ func getLayer3SrcDstFromPacket(packet gopacket.Packet) (net.IP, net.IP, error) {
 	return getSrcDstFromLayer3(layer3)
 }
 
+// revive:enable:confusing-results
+
 // getLayer3TypeFromFlag returns the layer 3 protocol type from a given flag.
 func getLayer3TypeFromFlag(layer3TypeFlag int) (gopacket.LayerType, error) {
 	switch layer3TypeFlag {
@@ -254,7 +268,7 @@ func getLayer3TypeFromFlag(layer3TypeFlag int) (gopacket.LayerType, error) {
 	case familyIPv6:
 		return layers.LayerTypeIPv6, nil
 	}
-	return 0, fmt.Errorf("wrong layer 3 type")
+	return 0, errors.New("wrong layer 3 type")
 }
 
 // getLayer3TypeFlagFromEvent returns the layer 3 protocol type from a given event.
@@ -265,7 +279,7 @@ func getLayer3TypeFlagFromEvent(event *trace.Event) (int, error) {
 	case event.ReturnValue&familyIPv6 == familyIPv6:
 		return familyIPv6, nil
 	}
-	return 0, fmt.Errorf("wrong layer 3 ret value flag")
+	return 0, errors.New("wrong layer 3 ret value flag")
 }
 
 // getLengthFromPacket returns the packet length from a given packet.
@@ -280,7 +294,7 @@ func getLengthFromPacket(packet gopacket.Packet) (uint32, error) {
 	case (*layers.IPv6):
 		return uint32(v.Length), nil
 	}
-	return 0, fmt.Errorf("wrong layer 3 protocol type")
+	return 0, errors.New("wrong layer 3 protocol type")
 }
 
 //
@@ -294,7 +308,7 @@ func getLayer4FromPacket(packet gopacket.Packet) (gopacket.TransportLayer, error
 	case (*layers.TCP):
 	case (*layers.UDP):
 	default:
-		return nil, fmt.Errorf("wrong layer 4 protocol type")
+		return nil, errors.New("wrong layer 4 protocol type")
 	}
 	return layer4, nil
 }
@@ -307,7 +321,7 @@ func getLayer4TCPFromPacket(packet gopacket.Packet) (*layers.TCP, error) {
 	}
 	tcp, ok := layer4.(*layers.TCP)
 	if !ok {
-		return nil, fmt.Errorf("wrong layer 4 protocol type")
+		return nil, errors.New("wrong layer 4 protocol type")
 	}
 	return tcp, nil
 }
@@ -320,7 +334,7 @@ func getLayer4UDPFromPacket(packet gopacket.Packet) (*layers.UDP, error) {
 	}
 	udp, ok := layer4.(*layers.UDP)
 	if !ok {
-		return nil, fmt.Errorf("wrong layer 4 protocol type")
+		return nil, errors.New("wrong layer 4 protocol type")
 	}
 	return udp, nil
 }
@@ -337,8 +351,10 @@ func getLayer4ProtoFromPacket(packet gopacket.Packet) (uint8, error) {
 	case (*layers.UDP):
 		return IPPROTO_UDP, nil
 	}
-	return 0, fmt.Errorf("wrong layer 4 protocol type")
+	return 0, errors.New("wrong layer 4 protocol type")
 }
+
+// revive:disable:confusing-results
 
 // getLayer4SrcPortDstPortFromPacket returns the source and destination ports from the packet.
 func getLayer4SrcPortDstPortFromPacket(packet gopacket.Packet) (uint16, uint16, error) {
@@ -352,8 +368,10 @@ func getLayer4SrcPortDstPortFromPacket(packet gopacket.Packet) (uint16, uint16, 
 	case (*layers.UDP):
 		return uint16(v.SrcPort), uint16(v.DstPort), nil
 	}
-	return 0, 0, fmt.Errorf("wrong layer 4 protocol type")
+	return 0, 0, errors.New("wrong layer 4 protocol type")
 }
+
+// revive:enable:confusing-results
 
 //
 // Special Layer (Some consider it as Layer 4, others Layer 3)
@@ -364,11 +382,11 @@ func getLayerICMPFromPacket(packet gopacket.Packet) (*layers.ICMPv4, error) {
 	// ICMP might be considered Layer 3 (per OSI) or Layer 4 (per TCP/IP).
 	layer := packet.Layer(layers.LayerTypeICMPv4)
 	if layer == nil {
-		return nil, fmt.Errorf("wrong layer protocol type")
+		return nil, errors.New("wrong layer protocol type")
 	}
 	icmp, ok := layer.(*layers.ICMPv4)
 	if !ok {
-		return nil, fmt.Errorf("wrong layer protocol type")
+		return nil, errors.New("wrong layer protocol type")
 	}
 	return icmp, nil
 }
@@ -378,11 +396,11 @@ func getLayerICMPv6FromPacket(packet gopacket.Packet) (*layers.ICMPv6, error) {
 	// ICMP might be considered Layer 3 (per OSI) or Layer 4 (per TCP/IP).
 	layer := packet.Layer(layers.LayerTypeICMPv6)
 	if layer == nil {
-		return nil, fmt.Errorf("wrong layer protocol type")
+		return nil, errors.New("wrong layer protocol type")
 	}
 	icmp, ok := layer.(*layers.ICMPv6)
 	if !ok {
-		return nil, fmt.Errorf("wrong layer protocol type")
+		return nil, errors.New("wrong layer protocol type")
 	}
 	return icmp, nil
 }
@@ -400,14 +418,14 @@ func getLayer7DNSFromPacket(packet gopacket.Packet) (*layers.DNS, error) {
 	case (*layers.DNS):
 		return l7, nil
 	}
-	return nil, fmt.Errorf("wrong layer 7 protocol type")
+	return nil, errors.New("wrong layer 7 protocol type")
 }
 
 // getLayer7FromPacket returns the layer 7 protocol from the packet.
 func getLayer7FromPacket(packet gopacket.Packet) (gopacket.ApplicationLayer, error) {
 	layer7 := packet.ApplicationLayer()
 	if layer7 == nil {
-		return nil, fmt.Errorf("wrong layer 7 protocol type")
+		return nil, errors.New("wrong layer 7 protocol type")
 	}
 	return layer7, nil
 }
@@ -501,42 +519,42 @@ func getProtoICMPv6(icmpv6 *layers.ICMPv6) trace.ProtoICMPv6 {
 }
 
 // getProtoDNS returns the ProtoDNS from the DNS.
-func getProtoDNS(dns *layers.DNS) trace.ProtoDNS {
+func getProtoDNS(dnsLayer *layers.DNS) trace.ProtoDNS {
 	proto := trace.ProtoDNS{
-		ID:           dns.ID,
-		QR:           boolToUint8(dns.QR),
-		OpCode:       strToLower(dns.OpCode.String()),
-		AA:           boolToUint8(dns.AA),
-		TC:           boolToUint8(dns.TC),
-		RD:           boolToUint8(dns.RD),
-		RA:           boolToUint8(dns.RA),
-		Z:            dns.Z,
-		ResponseCode: strToLower(dns.ResponseCode.String()),
-		QDCount:      dns.QDCount,
-		ANCount:      dns.ANCount,
-		NSCount:      dns.NSCount,
-		ARCount:      dns.ARCount,
+		ID:           dnsLayer.ID,
+		QR:           boolToUint8(dnsLayer.QR),
+		OpCode:       strToLower(dnsLayer.OpCode.String()),
+		AA:           boolToUint8(dnsLayer.AA),
+		TC:           boolToUint8(dnsLayer.TC),
+		RD:           boolToUint8(dnsLayer.RD),
+		RA:           boolToUint8(dnsLayer.RA),
+		Z:            dnsLayer.Z,
+		ResponseCode: strToLower(dnsLayer.ResponseCode.String()),
+		QDCount:      dnsLayer.QDCount,
+		ANCount:      dnsLayer.ANCount,
+		NSCount:      dnsLayer.NSCount,
+		ARCount:      dnsLayer.ARCount,
 	}
 
 	// Process all existing questions (if any).
-	proto.Questions = make([]trace.ProtoDNSQuestion, 0, len(dns.Questions))
-	proto.Answers = make([]trace.ProtoDNSResourceRecord, 0, len(dns.Answers))
-	proto.Authorities = make([]trace.ProtoDNSResourceRecord, 0, len(dns.Authorities))
-	proto.Additionals = make([]trace.ProtoDNSResourceRecord, 0, len(dns.Additionals))
+	proto.Questions = make([]trace.ProtoDNSQuestion, 0, len(dnsLayer.Questions))
+	proto.Answers = make([]trace.ProtoDNSResourceRecord, 0, len(dnsLayer.Answers))
+	proto.Authorities = make([]trace.ProtoDNSResourceRecord, 0, len(dnsLayer.Authorities))
+	proto.Additionals = make([]trace.ProtoDNSResourceRecord, 0, len(dnsLayer.Additionals))
 
-	for _, question := range dns.Questions {
+	for _, question := range dnsLayer.Questions {
 		proto.Questions = append(proto.Questions, getProtoDNSQuestion(question))
 	}
 
-	for _, answer := range dns.Answers {
+	for _, answer := range dnsLayer.Answers {
 		proto.Answers = append(proto.Answers, getProtoDNSResourceRecord(answer))
 	}
 
-	for _, auth := range dns.Authorities {
+	for _, auth := range dnsLayer.Authorities {
 		proto.Authorities = append(proto.Authorities, getProtoDNSResourceRecord(auth))
 	}
 
-	for _, add := range dns.Additionals {
+	for _, add := range dnsLayer.Additionals {
 		proto.Additionals = append(proto.Additionals, getProtoDNSResourceRecord(add))
 	}
 
@@ -724,9 +742,7 @@ func getDNSResponseFromProtoDNS(query trace.DnsQueryData, answers []trace.ProtoD
 		var dnsAnswer trace.DnsAnswer
 
 		switch answer.Type {
-		case "A":
-			dnsAnswer.Answer = answer.IP
-		case "AAAA":
+		case "A", "AAAA":
 			dnsAnswer.Answer = answer.IP
 		case "NS":
 			dnsAnswer.Answer = answer.NS

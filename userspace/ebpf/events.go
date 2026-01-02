@@ -17,17 +17,7 @@ const (
 	NetPacketParsed events.ID = iota + 100000
 )
 
-var CoreEvents = map[events.ID]events.Definition{
-	NetPacketParsed: events.NewDefinition(
-		NetPacketParsed, NetPacketParsed,
-		"net_packet_parsed", events.NewVersion(1, 0, 0),
-		"parse raw network packets", "", false, false,
-		[]string{"packets"},
-		events.NewDependencies([]events.ID{events.NetPacketRaw}, nil, nil, nil,
-			events.NewCapabilities(nil, nil)),
-		nil, nil,
-	),
-}
+var CoreEvents = map[events.ID]events.Definition{}
 
 type eventType struct {
 	*ordereddict.Dict
@@ -36,8 +26,8 @@ type eventType struct {
 	tevent *trace.Event
 }
 
-func decodeEvent(dataRaw []byte) (*eventType, events.ID, error) {
-	ebpfMsgDecoder := bufferdecoder.New(dataRaw)
+func (self *EBPFManager) decodeEvent(dataRaw []byte) (*eventType, events.ID, error) {
+	ebpfMsgDecoder := bufferdecoder.New(dataRaw, self.dataTypeDecoder)
 	var eCtx bufferdecoder.EventContext
 
 	err := ebpfMsgDecoder.DecodeContext(&eCtx)
@@ -52,16 +42,18 @@ func decodeEvent(dataRaw []byte) (*eventType, events.ID, error) {
 	}
 
 	eventId := events.ID(eCtx.EventID)
-	if !events.Core.IsDefined(eventId) {
+	eventDefinition := events.Core.GetDefinitionByID(eventId)
+	if eventDefinition.NotValid() {
 		return nil, 0, errfmt.Errorf(
 			"failed to get configuration of event %d", eventId)
 	}
-	eventDefinition := events.Core.GetDefinitionByID(eventId)
-	evtParams := eventDefinition.GetParams()
+
+	evtFields := eventDefinition.GetFields()
 	evtName := eventDefinition.GetName()
 
-	args := make([]trace.Argument, len(evtParams))
-	err = ebpfMsgDecoder.DecodeArguments(args, int(argnum), evtParams, evtName, eventId)
+	args := make([]trace.Argument, len(evtFields))
+	err = ebpfMsgDecoder.DecodeArguments(args, int(argnum), evtFields,
+		evtName, eventId)
 	if err != nil {
 		return nil, 0, err
 	}

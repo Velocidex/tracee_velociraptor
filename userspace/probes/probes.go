@@ -13,6 +13,8 @@ type Probe interface {
 	detach(...interface{}) error
 	// autoload sets the probe's ebpf program automatic attaching to its hook.
 	autoload(module *bpf.Module, autoload bool) error
+	// isCompatible checks if the probe is compatible with the given environment.
+	//isCompatible(env EnvironmentProvider) (bool, error)
 }
 
 //
@@ -137,6 +139,7 @@ const (
 	SignalSchedProcessFork
 	SignalSchedProcessExec
 	SignalSchedProcessExit
+	SignalHeartbeat
 	ExecuteFinishedX86
 	ExecuteAtFinishedX86
 	ExecuteFinishedCompatX86
@@ -160,6 +163,8 @@ const (
 	Dup3
 	Dup3Ret
 	ChmodCommon
+	SecuritySbUmount
+	SecurityTaskPrctl
 )
 
 // Test probe handles
@@ -167,4 +172,9 @@ const (
 	TestUnavailableHook = 1000 + iota
 	ExecTest
 	EmptyKprobe
+	IncompatibleProbe
+	LsmTest
+	FeaturesFallbackArena
+	FeaturesFallbackHelper
+	FeaturesFallbackMinimal
 )

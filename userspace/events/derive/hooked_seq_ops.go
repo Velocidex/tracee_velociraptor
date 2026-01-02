@@ -1,12 +1,15 @@
+//go:build XXXX
+// +build XXXX
+
 package derive
 
 import (
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/parse"
+	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
-	"github.com/Velocidex/tracee_velociraptor/userspace/utils"
-	"github.com/Velocidex/tracee_velociraptor/userspace/utils/environment"
+	symbol "github.com/Velocidex/tracee_velociraptor/userspace/utils/environment"
 )
 
 // Struct names for the interfaces HookedSeqOpsEventID checks for hooks
@@ -27,12 +30,12 @@ var NetSeqOpsFuncs = [4]string{
 	"stop",
 }
 
-func HookedSeqOps(kernelSymbols *environment.KernelSymbolTable) DeriveFunction {
+func HookedSeqOps(kernelSymbols *symbol.KernelSymbolTable) DeriveFunction {
 	return deriveSingleEvent(events.HookedSeqOps, deriveHookedSeqOpsArgs(kernelSymbols))
 }
 
-func deriveHookedSeqOpsArgs(kernelSymbols *environment.KernelSymbolTable) deriveArgsFunction {
-	return func(event trace.Event) ([]interface{}, error) {
+func deriveHookedSeqOpsArgs(kernelSymbols *symbol.KernelSymbolTable) deriveArgsFunction {
+	return func(event *trace.Event) ([]interface{}, error) {
 		seqOpsArr, err := parse.ArgVal[[]uint64](event.Args, "net_seq_ops")
 		if err != nil || len(seqOpsArr) < 1 {
 			return nil, errfmt.WrapError(err)
@@ -43,12 +46,28 @@ func deriveHookedSeqOpsArgs(kernelSymbols *environment.KernelSymbolTable) derive
 			if addr == 0 {
 				continue
 			}
-			hookingFunction := utils.ParseSymbol(addr, kernelSymbols)
-			seqOpsStruct := NetSeqOps[i/4]
-			seqOpsFunc := NetSeqOpsFuncs[i%4]
+			hookingFunction := kernelSymbols.GetPotentiallyHiddenSymbolByAddr(addr)[0]
+			// Indexing logic is as follows:
+			// For an address at index i:
+			//   - seqOpsStruct = NetSeqOps[i/4]
+			//   - seqOpsFunc = NetSeqOpsFuncs[i%4]
+			seqOpsStruct, seqOpsFunc := getSeqOpsSymbols(i)
+			if seqOpsStruct == "" || seqOpsFunc == "" {
+				logger.Errorw("failed to get seq ops symbols - this should not happen", "index", i)
+				continue
+			}
 			hookedSeqOps[seqOpsStruct+"_"+seqOpsFunc] =
 				trace.HookedSymbolData{SymbolName: hookingFunction.Name, ModuleOwner: hookingFunction.Owner}
 		}
 		return []interface{}{hookedSeqOps}, nil
 	}
+}
+
+func getSeqOpsSymbols(index int) (seqOpsStruct string, seqOpsFunc string) {
+	seqOpsStruct = NetSeqOps[index/4]
+	seqOpsFunc = NetSeqOpsFuncs[index%4]
+	if seqOpsStruct == "" || seqOpsFunc == "" {
+		return "", ""
+	}
+	return seqOpsStruct, seqOpsFunc
 }

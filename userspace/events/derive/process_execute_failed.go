@@ -21,22 +21,22 @@ func InitProcessExecuteFailedGenerator() (*ExecFailedGenerator, error) {
 	// For now, we assume that the current value is sufficient
 	const executionEventsCacheSize = 16
 
-	executeParamsCache, err := lru.New[int, *trace.Event](executionEventsCacheSize)
+	executeFieldsCache, err := lru.New[int, *trace.Event](executionEventsCacheSize)
 	if err != nil {
 		return nil, err
 	}
 	return &ExecFailedGenerator{
-		baseEvents: executeParamsCache,
+		baseEvents: executeFieldsCache,
 		deriveBase: makeDeriveBase(events.ProcessExecuteFailed),
 	}, nil
 }
 
 // ProcessExecuteFailed return the DeriveFunction for the "process_execute_failed" event.
 func (gen *ExecFailedGenerator) ProcessExecuteFailed() DeriveFunction {
-	return func(event trace.Event) ([]trace.Event, []error) {
+	return func(event *trace.Event) ([]trace.Event, []error) {
 		var errs []error
 		var derivedEvents []trace.Event
-		derivedEvent, err := gen.deriveEvent(&event)
+		derivedEvent, err := gen.deriveEvent(event)
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -94,7 +94,8 @@ func (gen *ExecFailedGenerator) handleExecFinished(event *trace.Event) (*trace.E
 func (gen *ExecFailedGenerator) handleExecBaseEvent(event *trace.Event) (*trace.Event, error) {
 	// We don't have the execution end info - cache current event and wait for it to be received
 	// This is the expected flow, as the execution finished event come chronology after
-	gen.baseEvents.Add(event.HostProcessID, event)
+	evtCopy := shallowCopyEvent(event)
+	gen.baseEvents.Add(event.HostProcessID, evtCopy)
 	return nil, nil
 }
 
@@ -103,7 +104,7 @@ func (gen *ExecFailedGenerator) generateEvent(
 	baseEvent *trace.Event,
 	execInfo execEndInfo,
 ) (*trace.Event, error) {
-	newEvent := *baseEvent
+	newEvent := shallowCopyEvent(baseEvent)
 	newEvent.Timestamp = execInfo.timestamp
 	newEvent.EventID = gen.deriveBase.ID
 	newEvent.EventName = gen.deriveBase.Name
@@ -113,7 +114,7 @@ func (gen *ExecFailedGenerator) generateEvent(
 	newEvent.Args[parse.ArgIndex(newEvent.Args, "argv")] = execInfo.args[parse.ArgIndex(execInfo.args, "argv")]
 	newEvent.Args[parse.ArgIndex(newEvent.Args, "envp")] = execInfo.args[parse.ArgIndex(execInfo.args, "envp")]
 
-	return &newEvent, nil
+	return newEvent, nil
 }
 
 func isFailedExec(returnCode int) bool {

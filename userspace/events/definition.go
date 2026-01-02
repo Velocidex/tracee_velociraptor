@@ -1,21 +1,16 @@
 package events
 
-import (
-	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
-)
-
 type Definition struct {
 	id           ID // TODO: use id ?
 	id32Bit      ID
 	name         string
 	version      Version
 	description  string
-	docPath      string // Relative to the 'doc/events' directory
 	internal     bool
 	syscall      bool
-	dependencies Dependencies
+	dependencies DependencyStrategy
 	sets         []string
-	params       []trace.ArgMeta
+	fields       []DataField
 	properties   map[string]interface{}
 }
 
@@ -25,12 +20,11 @@ func NewDefinition(
 	name string,
 	version Version,
 	description string,
-	docPath string,
 	internal bool,
 	syscall bool,
 	sets []string,
-	deps Dependencies,
-	params []trace.ArgMeta,
+	deps DependencyStrategy,
+	fields []DataField,
 	properties map[string]interface{},
 ) Definition {
 	return Definition{
@@ -39,12 +33,11 @@ func NewDefinition(
 		name:         name,
 		version:      version,
 		description:  description,
-		docPath:      docPath,
 		internal:     internal,
 		syscall:      syscall,
 		dependencies: deps,
 		sets:         sets,
-		params:       params,
+		fields:       fields,
 		properties:   properties,
 	}
 }
@@ -71,10 +64,6 @@ func (d Definition) GetDescription() string {
 	return d.description
 }
 
-func (d Definition) GetDocPath() string {
-	return d.docPath
-}
-
 func (d Definition) IsInternal() bool {
 	return d.internal
 }
@@ -83,7 +72,7 @@ func (d Definition) IsSyscall() bool {
 	return d.syscall
 }
 
-func (d Definition) GetDependencies() Dependencies {
+func (d Definition) GetDependencies() DependencyStrategy {
 	return d.dependencies
 }
 
@@ -91,12 +80,26 @@ func (d Definition) GetSets() []string {
 	return d.sets
 }
 
-func (d Definition) GetParams() []trace.ArgMeta {
-	return d.params
+func (d Definition) GetFields() []DataField {
+	return d.fields
 }
 
 func (d Definition) IsSignature() bool {
 	if d.id >= StartSignatureID && d.id <= MaxSignatureID {
+		return true
+	}
+
+	return false
+}
+
+func (d Definition) IsDetector() bool {
+	// Check if event is in the predefined detector ID range
+	if d.id >= StartPredefinedDetectorID && d.id <= MaxPredefinedDetectorID {
+		return true
+	}
+
+	// Check if event is in the dynamic detector ID range
+	if d.id >= StartDetectorID && d.id <= MaxDetectorID {
 		return true
 	}
 
@@ -113,4 +116,8 @@ func (d Definition) IsNetwork() bool {
 
 func (d Definition) GetProperties() map[string]interface{} {
 	return d.properties
+}
+
+func (d Definition) NotValid() bool {
+	return d.id == Undefined || d.id == Unsupported
 }

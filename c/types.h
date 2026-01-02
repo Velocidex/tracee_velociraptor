@@ -38,160 +38,225 @@ typedef struct event_context {
     u64 matched_policies;
 } event_context_t;
 
-enum event_id_e
-{
-    // Net events IDs
-    NET_PACKET_BASE = 700,
-    NET_PACKET_RAW,
-    NET_PACKET_IP,
-    NET_PACKET_TCP,
-    NET_PACKET_UDP,
-    NET_PACKET_ICMP,
-    NET_PACKET_ICMPV6,
-    NET_PACKET_DNS,
-    NET_PACKET_HTTP,
-    NET_CAPTURE_BASE,
-    NET_FLOW_BASE,
-    MAX_NET_EVENT_ID,
-    // Common event IDs
-    RAW_SYS_ENTER,
-    RAW_SYS_EXIT,
-    SCHED_PROCESS_FORK,
-    SCHED_PROCESS_EXEC,
-    SCHED_PROCESS_EXIT,
-    SCHED_SWITCH,
-    DO_EXIT,
-    CAP_CAPABLE,
-    VFS_WRITE,
-    VFS_WRITEV,
-    VFS_READ,
-    VFS_READV,
-    MEM_PROT_ALERT,
-    COMMIT_CREDS,
-    SWITCH_TASK_NS,
-    MAGIC_WRITE,
-    CGROUP_ATTACH_TASK,
-    CGROUP_MKDIR,
-    CGROUP_RMDIR,
-    SECURITY_BPRM_CHECK,
-    SECURITY_FILE_OPEN,
-    SECURITY_INODE_UNLINK,
-    SECURITY_SOCKET_CREATE,
-    SECURITY_SOCKET_LISTEN,
-    SECURITY_SOCKET_CONNECT,
-    SECURITY_SOCKET_ACCEPT,
-    SECURITY_SOCKET_BIND,
-    SECURITY_SOCKET_SETSOCKOPT,
-    SECURITY_SB_MOUNT,
-    SECURITY_BPF,
-    SECURITY_BPF_MAP,
-    SECURITY_KERNEL_READ_FILE,
-    SECURITY_INODE_MKNOD,
-    SECURITY_POST_READ_FILE,
-    SECURITY_INODE_SYMLINK,
-    SECURITY_MMAP_FILE,
-    SECURITY_FILE_MPROTECT,
-    SOCKET_DUP,
-    HIDDEN_INODES,
-    __KERNEL_WRITE,
-    PROC_CREATE,
-    KPROBE_ATTACH,
-    CALL_USERMODE_HELPER,
-    DIRTY_PIPE_SPLICE,
-    DEBUGFS_CREATE_FILE,
-    SYSCALL_TABLE_CHECK,
-    DEBUGFS_CREATE_DIR,
-    DEVICE_ADD,
-    REGISTER_CHRDEV,
-    SHARED_OBJECT_LOADED,
-    DO_INIT_MODULE,
-    SOCKET_ACCEPT,
-    LOAD_ELF_PHDRS,
-    HOOKED_PROC_FOPS,
-    PRINT_NET_SEQ_OPS,
-    TASK_RENAME,
-    SECURITY_INODE_RENAME,
-    DO_SIGACTION,
-    BPF_ATTACH,
-    KALLSYMS_LOOKUP_NAME,
-    DO_MMAP,
-    PRINT_MEM_DUMP,
-    VFS_UTIMES,
-    DO_TRUNCATE,
-    FILE_MODIFICATION,
-    INOTIFY_WATCH,
-    SECURITY_BPF_PROG,
-    PROCESS_EXECUTE_FAILED,
-    SECURITY_PATH_NOTIFY,
-    SET_FS_PWD,
-    SUSPICIOUS_SYSCALL_SOURCE,
-    STACK_PIVOT,
-    HIDDEN_KERNEL_MODULE_SEEKER,
-    MODULE_LOAD,
-    MODULE_FREE,
-    EXECUTE_FINISHED,
-    PROCESS_EXECUTE_FAILED_INTERNAL,
-    SECURITY_TASK_SETRLIMIT,
-    SECURITY_SETTIME64,
-    CHMOD_COMMON,
-    OPEN_FILE_NS,
-    OPEN_FILE_MOUNT,
-    MAX_EVENT_ID,
-    NO_EVENT_SUBMIT,
+#define EVENT_ID_LIST_NET                                                                          \
+    X(NET_PACKET_BASE, = 700)                                                                      \
+    X(NET_PACKET_RAW, )                                                                            \
+    X(NET_PACKET_IP, )                                                                             \
+    X(NET_PACKET_TCP, )                                                                            \
+    X(NET_PACKET_UDP, )                                                                            \
+    X(NET_PACKET_ICMP, )                                                                           \
+    X(NET_PACKET_ICMPV6, )                                                                         \
+    X(NET_PACKET_DNS, )                                                                            \
+    X(NET_PACKET_HTTP, )                                                                           \
+    X(NET_CAPTURE_BASE, )                                                                          \
+    X(NET_FLOW_BASE, )                                                                             \
+    X(MAX_NET_EVENT_ID, )                                                                          \
+    // ...
 
-    // Test events IDs
-    EXEC_TEST = 8000,
-    TEST_MISSING_KSYMBOLS,
-    TEST_FAILED_ATTACH,
-};
+#define EVENT_ID_LIST_COMMON                                                                       \
+    X(RAW_SYS_ENTER, )                                                                             \
+    X(RAW_SYS_EXIT, )                                                                              \
+    X(SCHED_PROCESS_FORK, )                                                                        \
+    X(SCHED_PROCESS_EXEC, )                                                                        \
+    X(SCHED_PROCESS_EXIT, )                                                                        \
+    X(SCHED_SWITCH, )                                                                              \
+    X(DO_EXIT, )                                                                                   \
+    X(CAP_CAPABLE, )                                                                               \
+    X(VFS_WRITE, )                                                                                 \
+    X(VFS_WRITEV, )                                                                                \
+    X(VFS_READ, )                                                                                  \
+    X(VFS_READV, )                                                                                 \
+    X(MEM_PROT_ALERT, )                                                                            \
+    X(COMMIT_CREDS, )                                                                              \
+    X(SWITCH_TASK_NS, )                                                                            \
+    X(MAGIC_WRITE, )                                                                               \
+    X(CGROUP_ATTACH_TASK, )                                                                        \
+    X(CGROUP_MKDIR, )                                                                              \
+    X(CGROUP_RMDIR, )                                                                              \
+    X(SECURITY_BPRM_CHECK, )                                                                       \
+    X(SECURITY_FILE_OPEN, )                                                                        \
+    X(SECURITY_INODE_UNLINK, )                                                                     \
+    X(SECURITY_SOCKET_CREATE, )                                                                    \
+    X(SECURITY_SOCKET_LISTEN, )                                                                    \
+    X(SECURITY_SOCKET_CONNECT, )                                                                   \
+    X(SECURITY_SOCKET_ACCEPT, )                                                                    \
+    X(SECURITY_SOCKET_BIND, )                                                                      \
+    X(SECURITY_SOCKET_SETSOCKOPT, )                                                                \
+    X(SECURITY_SB_MOUNT, )                                                                         \
+    X(SECURITY_BPF, )                                                                              \
+    X(SECURITY_BPF_MAP, )                                                                          \
+    X(SECURITY_KERNEL_READ_FILE, )                                                                 \
+    X(SECURITY_INODE_MKNOD, )                                                                      \
+    X(SECURITY_KERNEL_POST_READ_FILE, )                                                            \
+    X(SECURITY_INODE_SYMLINK, )                                                                    \
+    X(SECURITY_MMAP_FILE, )                                                                        \
+    X(SECURITY_FILE_MPROTECT, )                                                                    \
+    X(SOCKET_DUP, )                                                                                \
+    X(ZEROED_INODES, )                                                                             \
+    X(__KERNEL_WRITE, )                                                                            \
+    X(PROC_CREATE, )                                                                               \
+    X(KPROBE_ATTACH, )                                                                             \
+    X(CALL_USERMODEHELPER, )                                                                       \
+    X(DIRTY_PIPE_SPLICE, )                                                                         \
+    X(DEBUGFS_CREATE_FILE, )                                                                       \
+    X(SYSCALL_TABLE_CHECK, )                                                                       \
+    X(DEBUGFS_CREATE_DIR, )                                                                        \
+    X(DEVICE_ADD, )                                                                                \
+    X(REGISTER_CHRDEV, )                                                                           \
+    X(SHARED_OBJECT_LOADED, )                                                                      \
+    X(DO_INIT_MODULE, )                                                                            \
+    X(SOCKET_ACCEPT, )                                                                             \
+    X(LOAD_ELF_PHDRS, )                                                                            \
+    X(HOOKED_PROC_FOPS, )                                                                          \
+    X(PRINT_NET_SEQ_OPS, )                                                                         \
+    X(TASK_RENAME, )                                                                               \
+    X(SECURITY_INODE_RENAME, )                                                                     \
+    X(DO_SIGACTION, )                                                                              \
+    X(BPF_ATTACH, )                                                                                \
+    X(KALLSYMS_LOOKUP_NAME, )                                                                      \
+    X(DO_MMAP, )                                                                                   \
+    X(PRINT_MEM_DUMP, )                                                                            \
+    X(VFS_UTIMES, )                                                                                \
+    X(DO_TRUNCATE, )                                                                               \
+    X(FILE_MODIFICATION, )                                                                         \
+    X(INOTIFY_WATCH, )                                                                             \
+    X(SECURITY_BPF_PROG, )                                                                         \
+    X(PROCESS_EXECUTE_FAILED, )                                                                    \
+    X(SECURITY_PATH_NOTIFY, )                                                                      \
+    X(SET_FS_PWD, )                                                                                \
+    X(SUSPICIOUS_SYSCALL_SOURCE, )                                                                 \
+    X(STACK_PIVOT, )                                                                               \
+    X(HIDDEN_KERNEL_MODULE_SEEKER, )                                                               \
+    X(MODULE_LOAD, )                                                                               \
+    X(MODULE_FREE, )                                                                               \
+    X(EXECUTE_FINISHED, )                                                                          \
+    X(PROCESS_EXECUTE_FAILED_INTERNAL, )                                                           \
+    X(SECURITY_TASK_SETRLIMIT, )                                                                   \
+    X(SECURITY_SETTIME64, )                                                                        \
+    X(CHMOD_COMMON, )                                                                              \
+    X(SECURITY_SB_UMOUNT, )                                                                        \
+    X(SECURITY_TASK_PRCTL, )                                                                       \
+    // ...
 
-enum signal_event_id_e
-{
-    SIGNAL_CGROUP_MKDIR = 5000,
-    SIGNAL_CGROUP_RMDIR,
-    SIGNAL_SCHED_PROCESS_FORK,
-    SIGNAL_SCHED_PROCESS_EXEC,
-    SIGNAL_SCHED_PROCESS_EXIT,
-};
+#define EVENT_ID_LIST_LAST                                                                         \
+    X(MAX_EVENT_ID, )                                                                              \
+    X(NO_EVENT_SUBMIT, )
+
+#define EVENT_ID_LIST_TEST                                                                         \
+    X(EXEC_TEST, = 8000)                                                                           \
+    X(TEST_MISSING_KSYMBOLS, )                                                                     \
+    X(TEST_FAILED_ATTACH, )                                                                        \
+    X(INCOMPATIBLE_PROBE_TEST, )                                                                   \
+    X(INCOMPATIBLE_PROBE_WITH_FALLBACKS_TEST, )                                                    \
+    X(FAILED_EVENT_DEPENDENCY_TEST, )                                                              \
+    X(MULTIPLE_FALLBACKS_TEST, )                                                                   \
+    X(SHARED_PROBE_EVENT_A, )                                                                      \
+    X(SHARED_PROBE_EVENT_B, )                                                                      \
+    X(LSM_TEST, )                                                                                  \
+    X(FEATURES_FALLBACK_TEST, )                                                                    \
+    // ...
+
+#ifndef EXTENDED_BUILD
+typedef enum event_id_e {
+    #define X(name, val) name val,
+    // clang-format off
+    EVENT_ID_LIST_NET
+    EVENT_ID_LIST_COMMON
+    EVENT_ID_LIST_LAST
+    EVENT_ID_LIST_TEST
+    // clang-format on
+    #undef X
+} event_id_e;
+#endif // #ifndef EXTENDED_BUILD
+
+#define SIGNAL_EVENT_ID_LIST                                                                       \
+    X(SIGNAL_CGROUP_MKDIR, = 5000)                                                                 \
+    X(SIGNAL_CGROUP_RMDIR, )                                                                       \
+    X(SIGNAL_SCHED_PROCESS_FORK, )                                                                 \
+    X(SIGNAL_SCHED_PROCESS_EXEC, )                                                                 \
+    X(SIGNAL_SCHED_PROCESS_EXIT, )                                                                 \
+    X(SIGNAL_HEARTBEAT, )                                                                          \
+    // ...
+
+#ifndef EXTENDED_BUILD
+typedef enum signal_event_id_e {
+    #define X(name, val) name val,
+    SIGNAL_EVENT_ID_LIST
+    #undef X
+} signal_event_id_e;
+#endif // #ifndef EXTENDED_BUILD
+
+#define TAIL_CALL_ID_LIST_CORE                                                                     \
+    X(TAIL_VFS_WRITE, )                                                                            \
+    X(TAIL_VFS_WRITEV, )                                                                           \
+    X(TAIL_SEND_BIN, )                                                                             \
+    X(TAIL_SEND_BIN_TP, )                                                                          \
+    X(TAIL_KERNEL_WRITE, )                                                                         \
+    X(TAIL_SCHED_PROCESS_EXEC_EVENT_SUBMIT, )                                                      \
+    X(TAIL_VFS_READ, )                                                                             \
+    X(TAIL_VFS_READV, )                                                                            \
+    X(TAIL_PROCESS_EXECUTE_FAILED, )                                                               \
+    X(TAIL_HIDDEN_KERNEL_MODULE_PROC, )                                                            \
+    X(TAIL_HIDDEN_KERNEL_MODULE_KSET, )                                                            \
+    X(TAIL_HIDDEN_KERNEL_MODULE_MOD_TREE, )                                                        \
+    X(TAIL_HIDDEN_KERNEL_MODULE_NEW_MOD_ONLY, )                                                    \
+    X(TAIL_HIDDEN_KERNEL_MODULE_MODTREE_LOOP, )                                                    \
+    X(TAIL_FEATURES_FALLBACK, )                                                                    \
+    // ...
+
+#ifndef EXTENDED_BUILD
+typedef enum tail_call_id_e {
+    #define X(name, val) name val,
+    // clang-format off
+    TAIL_CALL_ID_LIST_CORE
+    X(MAX_TAIL_CALL, )
+    // clang-format on
+    #undef X
+} tail_call_id_e;
+#endif // #ifndef EXTENDED_BUILD
 
 typedef struct args {
     unsigned long args[6];
 } args_t;
 
 // NOTE: If any fields are added to argument_type_e, the array type_size_table
-// (and related defines) must be updated accordingly.
-enum argument_type_e
-{
-    NONE_T = 0UL,
+// (and related defines) must be updated accordingly. Corresponds to the DecodeAs enum in
+// pkg/events/data/decode.go.
+enum argument_type_e {
+    NONE_T = 0UL, // Default value - the argument does not originate from a decodable buffer.
     INT_T,
     UINT_T,
     LONG_T,
     ULONG_T,
-    OFF_T_T,
-    MODE_T_T,
-    DEV_T_T,
-    SIZE_T_T,
+    U16_T,
+    U8_T,
+    INT_ARR_2_T,
+    UINT64_ARR_T,
     POINTER_T,
+    BYTES_T,
     STR_T,
     STR_ARR_T,
     SOCKADDR_T,
-    BYTES_T,
-    U16_T,
     CRED_T,
-    INT_ARR_2_T,
-    UINT64_ARR_T,
-    U8_T,
     TIMESPEC_T,
     TYPE_MAX = 255UL
 };
 
-enum internal_hook_e
-{
-    EXEC_BINPRM = 80000,
-};
+#define ARG_TYPE_MAX_ARRAY (u8) TIMESPEC_T // last element defined in argument_type_e
 
-enum mem_prot_alert_e
-{
+#define INTERNAL_HOOK_LIST                                                                         \
+    X(EXEC_BINPRM, = 80000)                                                                        \
+    // ...
+
+#ifndef EXTENDED_BUILD
+typedef enum internal_hook_e {
+    #define X(name, val) name val,
+    INTERNAL_HOOK_LIST
+    #undef X
+} internal_hook_e;
+#endif // #ifndef EXTENDED_BUILD
+
+enum mem_prot_alert_e {
     ALERT_MMAP_W_X = 1,
     ALERT_MPROT_X_ADD,
     ALERT_MPROT_W_ADD,
@@ -212,14 +277,12 @@ typedef struct fd_arg_path {
 } fd_arg_path_t;
 
 // Flags in each task's context
-enum context_flags_e
-{
+enum context_flags_e {
     CONTAINER_STARTED_FLAG = (1 << 0), // mark the task's container have started
     IS_COMPAT_FLAG = (1 << 1)          // is the task running in compatible mode
 };
 
-enum container_state_e
-{
+enum container_state_e {
     CONTAINER_UNKNOWN = 0, // mark that container state is unknown
     CONTAINER_EXISTED,     // container existed before tracee was started
     CONTAINER_CREATED,     // new cgroup path created
@@ -337,6 +400,7 @@ typedef struct policies_config {
     u64 cgroup_id_filter_enabled;
     u64 cont_filter_enabled;
     u64 new_cont_filter_enabled;
+    u64 cont_started_filter_enabled;
     u64 new_pid_filter_enabled;
     u64 proc_tree_filter_enabled;
     u64 bin_path_filter_enabled;
@@ -351,6 +415,7 @@ typedef struct policies_config {
     u64 cgroup_id_filter_match_if_key_missing;
     u64 cont_filter_match_if_key_missing;
     u64 new_cont_filter_match_if_key_missing;
+    u64 cont_started_filter_match_if_key_missing;
     u64 new_pid_filter_match_if_key_missing;
     u64 proc_tree_filter_match_if_key_missing;
     u64 bin_path_filter_match_if_key_missing;
@@ -393,8 +458,7 @@ typedef struct event_config {
     data_filter_config_t data_filter;
 } event_config_t;
 
-enum capture_options_e
-{
+enum capture_options_e {
     NET_CAP_OPT_FILTERED = (1 << 0), // pcap should obey event filters
 };
 
@@ -439,16 +503,14 @@ typedef struct controlplane_signal {
 
 #define BPF_MAX_LOG_FILE_LEN 72
 
-enum bpf_log_level
-{
+enum bpf_log_level {
     BPF_LOG_LVL_DEBUG = -1,
     BPF_LOG_LVL_INFO,
     BPF_LOG_LVL_WARN,
     BPF_LOG_LVL_ERROR,
 };
 
-enum bpf_log_id
-{
+enum bpf_log_id {
     BPF_LOG_ID_UNSPEC = 0U, // enforce enum to u32
 
     // tracee functions
@@ -594,8 +656,7 @@ typedef struct file_mod_key {
     unsigned long inode;
 } file_mod_key_t;
 
-enum file_modification_op
-{
+enum file_modification_op {
     FILE_MODIFICATION_SUBMIT = 0,
     FILE_MODIFICATION_DONE,
 };

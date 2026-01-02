@@ -5,8 +5,7 @@
 
 #include <common/common.h>
 
-enum vma_type
-{
+enum vma_type {
     VMA_FILE_BACKED,
     VMA_ANON,
     VMA_MAIN_STACK,
@@ -81,7 +80,7 @@ statfunc struct mount *real_mount(struct vfsmount *mnt)
  * To be extra safe and accomodate for VMA counts higher than 1000,
  * we define the max traversal depth as 25.
  */
-#define MAX_VMA_RB_TREE_DEPTH 25
+#define MAX_VMA_RB_TREE_DEPTH 35
 
 static bool alerted_find_vma_unsupported = false;
 
@@ -105,10 +104,7 @@ statfunc struct vm_area_struct *find_vma(void *ctx, struct task_struct *task, u6
     struct vm_area_struct *vma = NULL;
     struct rb_node *rb_node = BPF_CORE_READ(mm, mm_rb.rb_node);
 
-#pragma unroll
     for (int i = 0; i < MAX_VMA_RB_TREE_DEPTH; i++) {
-        barrier(); // without this, the compiler refuses to unroll the loop
-
         if (rb_node == NULL)
             break;
 
@@ -117,12 +113,14 @@ statfunc struct vm_area_struct *find_vma(void *ctx, struct task_struct *task, u6
         unsigned long vm_end = BPF_CORE_READ(tmp, vm_end);
 
         if (vm_end > addr) {
-            vma = tmp;
-            if (vm_start <= addr)
+            if (vm_start <= addr) {
+                vma = tmp;
                 break;
+            }
             rb_node = BPF_CORE_READ(rb_node, rb_left);
-        } else
+        } else {
             rb_node = BPF_CORE_READ(rb_node, rb_right);
+        }
     }
 
     return vma;
