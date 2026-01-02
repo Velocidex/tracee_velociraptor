@@ -12,3 +12,5 @@ sync:
 
 clean:
 	rm -rf ./c/ ./userspace/
+
+full: clean sync generate bin
