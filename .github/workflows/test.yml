@@ -20,9 +20,8 @@ jobs:
       id: go
 
     - name: Build
-      if: always()
       env:
-        CC: x86_64-w64-mingw32-gcc
+        CGO_ENABLED: 0
       shell: bash
       run: |
         go run make.go -v Bin
