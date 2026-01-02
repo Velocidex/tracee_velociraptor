@@ -21,6 +21,12 @@ jobs:
         cache: false
       id: go
 
+    - name: Get dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get upgrade
+        sudo apt-get install llvm
+
     - name: Build
       env:
         CGO_ENABLED: 0
