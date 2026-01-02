@@ -1,9 +1,9 @@
 package derive
 
 import (
-	dns "github.com/Velocidex/tracee_velociraptor/userspace/dnscache"
-	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
+	"github.com/Velocidex/tracee_velociraptor/userspace/datastores/dns"
+	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 

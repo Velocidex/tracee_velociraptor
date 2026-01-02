@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/Velocidex/tracee_velociraptor/mutations"
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
 )
@@ -175,4 +176,13 @@ func fileb0x(asset string) error {
 	}
 
 	return err
+}
+
+func SyncCode() error {
+	m, err := mutations.LoadMutations("mutations/mutations.yaml")
+	if err != nil {
+		return err
+	}
+
+	return m.ApplyMutations()
 }

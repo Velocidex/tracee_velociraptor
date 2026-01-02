@@ -4,10 +4,10 @@ import (
 	"kernel.org/pub/linux/libs/security/libcap/cap"
 
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
+	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
+	"github.com/Velocidex/tracee_velociraptor/userspace/ebpf/probes"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/data"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/trigger"
-	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
-	"github.com/Velocidex/tracee_velociraptor/userspace/probes"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 

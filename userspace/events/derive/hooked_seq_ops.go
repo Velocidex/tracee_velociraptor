@@ -1,15 +1,12 @@
-//go:build XXXX
-// +build XXXX
-
 package derive
 
 import (
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
+	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
+	"github.com/Velocidex/tracee_velociraptor/userspace/datastores/symbol"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/parse"
-	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
-	symbol "github.com/Velocidex/tracee_velociraptor/userspace/utils/environment"
 )
 
 // Struct names for the interfaces HookedSeqOpsEventID checks for hooks

@@ -2,8 +2,8 @@ package derive
 
 import (
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
-	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
+	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 

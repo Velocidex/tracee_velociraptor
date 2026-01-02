@@ -424,7 +424,7 @@ struct uid_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, u32);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } uid_filter SEC(".maps");
 
 typedef struct uid_filter uid_filter_t;
@@ -464,7 +464,7 @@ struct mnt_ns_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, u32);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } mnt_ns_filter SEC(".maps");
 
 typedef struct mnt_ns_filter mnt_ns_filter_t;
@@ -484,7 +484,7 @@ struct pid_ns_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, u32);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } pid_ns_filter SEC(".maps");
 
 typedef struct pid_ns_filter pid_ns_filter_t;
@@ -504,7 +504,7 @@ struct uts_ns_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, string_filter_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } uts_ns_filter SEC(".maps");
 
 typedef struct uts_ns_filter uts_ns_filter_t;
@@ -524,7 +524,7 @@ struct data_filter_exact {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 1024);
     __type(key, data_filter_key_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } data_filter_exact SEC(".maps");
 
 typedef struct data_filter_exact data_filter_exact_t;
@@ -544,7 +544,7 @@ struct data_filter_suffix {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __uint(max_entries, 1024);
     __type(key, data_filter_lpm_key_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
     __uint(map_flags, BPF_F_NO_PREALLOC);
 } data_filter_suffix SEC(".maps");
 
@@ -565,7 +565,7 @@ struct data_filter_prefix {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __uint(max_entries, 1024);
     __type(key, data_filter_lpm_key_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
     __uint(map_flags, BPF_F_NO_PREALLOC);
 } data_filter_prefix SEC(".maps");
 
@@ -586,7 +586,7 @@ struct comm_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, string_filter_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } comm_filter SEC(".maps");
 
 typedef struct comm_filter comm_filter_t;
@@ -606,7 +606,7 @@ struct cgroup_id_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, u32);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } cgroup_id_filter SEC(".maps");
 
 typedef struct cgroup_id_filter cgroup_id_filter_t;
@@ -626,7 +626,7 @@ struct binary_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, binary_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } binary_filter SEC(".maps");
 
 typedef struct binary_filter binary_filter_t;
@@ -646,7 +646,7 @@ struct process_tree_map {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 10240);
     __type(key, u32);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } process_tree_map SEC(".maps");
 
 typedef struct process_tree_map process_tree_map_t;
@@ -725,21 +725,12 @@ struct signals {
 
 typedef struct signals signals_t;
 
-/*
 //
 // Test maps for features fallback test
 //
 
 // ARENA map for Level 1 (fentry + ARENA + bpf_get_current_task_btf) - Linux 6.9+
-struct features_test_arena {
-    __uint(type, BPF_MAP_TYPE_ARENA);
-    __uint(max_entries, 1);            // in pages
-    __uint(map_flags, BPF_F_MMAPABLE); // required for ARENA maps
-} features_test_arena SEC(".maps");
 
-typedef struct features_test_arena features_test_arena_t;
-
-*/
 
 // No additional maps needed - testing ARENA only for Level 1
 

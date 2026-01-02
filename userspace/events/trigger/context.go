@@ -6,8 +6,8 @@ import (
 
 	"github.com/Velocidex/tracee_velociraptor/userspace/counter"
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
-	"github.com/Velocidex/tracee_velociraptor/userspace/events/parse"
 	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
+	"github.com/Velocidex/tracee_velociraptor/userspace/events/parse"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 

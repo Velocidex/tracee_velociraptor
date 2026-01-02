@@ -1,15 +1,17 @@
 package capabilities
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 
+	"kernel.org/pub/linux/libs/security/libcap/cap"
+
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
 	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
-	"kernel.org/pub/linux/libs/security/libcap/cap"
 )
 
 var caps *Capabilities   // singleton for all packages
@@ -38,8 +40,9 @@ type Config struct {
 	BaseEbpf bool
 }
 
-// Initialize initializes the "caps" instance (singleton).
-func Initialize(cfg Config) error {
+// initializeOnce performs the actual singleton initialization without external locking.
+// This function should only be called while holding capsMutex.
+func initializeOnce(cfg Config) error {
 	var err error
 
 	once.Do(func() {
@@ -55,6 +58,14 @@ func Initialize(cfg Config) error {
 	return errfmt.WrapError(err)
 }
 
+// Initialize initializes the "caps" instance (singleton).
+func Initialize(cfg Config) error {
+	capsMutex.Lock()
+	defer capsMutex.Unlock()
+
+	return initializeOnce(cfg)
+}
+
 // GetInstance returns current "caps" instance. It initializes capabilities if
 // needed, bypassing the privilege dropping by default, and not adding eBPF to the base.
 func GetInstance() *Capabilities {
@@ -62,7 +73,7 @@ func GetInstance() *Capabilities {
 	defer capsMutex.Unlock()
 
 	if caps == nil {
-		err := Initialize(Config{
+		err := initializeOnce(Config{
 			Bypass:   true,
 			BaseEbpf: false,
 		})
@@ -460,7 +471,7 @@ func couldNotFindCapability(c string) error {
 }
 
 func couldNotReadPerfEventParanoid() error {
-	return fmt.Errorf("could not read procfs perf_event_paranoid")
+	return errors.New("could not read procfs perf_event_paranoid")
 }
 
 func couldNotSetProc(e error) error {

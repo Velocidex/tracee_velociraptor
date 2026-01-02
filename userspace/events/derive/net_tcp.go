@@ -1,27 +1,23 @@
-//go:build XXXX
-// +build XXXX
-
 package derive
 
 import (
 	"errors"
 	"strconv"
 
-	"github.com/Velocidex/tracee_velociraptor/userspace/dnscache"
-	dns "github.com/Velocidex/tracee_velociraptor/userspace/dnscache"
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
+	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
+	"github.com/Velocidex/tracee_velociraptor/userspace/parsers"
+	"github.com/Velocidex/tracee_velociraptor/userspace/datastores/dns"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/parse"
-	"github.com/Velocidex/tracee_velociraptor/userspace/events/parsers"
-	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 
 // NOTE: Derived from security_socket_XXX events, not from net_packet_XXX ones.
 
-func NetTCPConnect(cache *dnscache.DNSCache) DeriveFunction {
+func NetTCPConnect(cache *dns.DNSCache) DeriveFunction {
 	return deriveSingleEvent(events.NetTCPConnect,
-		func(event trace.Event) ([]interface{}, error) {
+		func(event *trace.Event) ([]interface{}, error) {
 			dstIP, dstPort, err := pickIpAndPort(event, "remote_addr")
 			if err != nil {
 				logger.Debugw("error picking address", "error", err)

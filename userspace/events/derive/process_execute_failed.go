@@ -3,10 +3,11 @@ package derive
 import (
 	"fmt"
 
+	lru "github.com/hashicorp/golang-lru/v2"
+
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/parse"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
-	lru "github.com/hashicorp/golang-lru/v2"
 )
 
 // ExecFailedGenerator is the object which implement the ProcessExecuteFailed event derivation

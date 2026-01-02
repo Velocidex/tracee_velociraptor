@@ -10,12 +10,11 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	errfmt "fmt"
-
-	"github.com/Velocidex/tracee_velociraptor/userspace/events"
-	"github.com/Velocidex/tracee_velociraptor/userspace/events/data"
+	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
 	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
 	timeutil "github.com/Velocidex/tracee_velociraptor/userspace/time"
+	"github.com/Velocidex/tracee_velociraptor/userspace/events"
+	"github.com/Velocidex/tracee_velociraptor/userspace/events/data"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 

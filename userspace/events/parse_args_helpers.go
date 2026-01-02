@@ -5,10 +5,10 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/Velocidex/tracee_velociraptor/userspace/events/parsers"
-	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
-	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 	pb "github.com/aquasecurity/tracee/api/v1beta1"
+	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
+	"github.com/Velocidex/tracee_velociraptor/userspace/parsers"
+	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 
 // Protobuf event parsing helper functions

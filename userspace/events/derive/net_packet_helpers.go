@@ -8,12 +8,13 @@ import (
 	"net/http"
 	"strings"
 
-	dns "github.com/Velocidex/tracee_velociraptor/userspace/dnscache"
-	"github.com/Velocidex/tracee_velociraptor/userspace/events"
-	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
-	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+
+	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
+	"github.com/Velocidex/tracee_velociraptor/userspace/datastores/dns"
+	"github.com/Velocidex/tracee_velociraptor/userspace/events"
+	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 
 // Event return value (retval) encodes network event information, such as:
@@ -80,7 +81,7 @@ func strToLower(given string) string {
 }
 
 // parsePayloadArg returns the packet payload from the event.
-func ParsePayloadArg(event *trace.Event) ([]byte, error) {
+func parsePayloadArg(event *trace.Event) ([]byte, error) {
 	payloadArg := events.GetArg(event.Args, "payload")
 	if payloadArg == nil {
 		return nil, noPayloadError()
@@ -145,7 +146,7 @@ func getPacketHTTPDirection(event *trace.Event) int {
 
 // createPacketFromEvent creates a gopacket.Packet from the event.
 func createPacketFromEvent(event *trace.Event) (gopacket.Packet, error) {
-	payload, err := ParsePayloadArg(event)
+	payload, err := parsePayloadArg(event)
 	if err != nil {
 		return nil, err
 	}

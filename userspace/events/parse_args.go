@@ -1,14 +1,18 @@
 package events
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
+	"unsafe"
 
+	bpf "github.com/Velocidex/tracee_velociraptor/userspace/compat/bpf"
+
+	pb "github.com/aquasecurity/tracee/api/v1beta1"
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
-	"github.com/Velocidex/tracee_velociraptor/userspace/events/parsers"
+	"github.com/Velocidex/tracee_velociraptor/userspace/parsers"
 	timeutil "github.com/Velocidex/tracee_velociraptor/userspace/time"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
-	pb "github.com/aquasecurity/tracee/api/v1beta1"
 )
 
 // ParseDataFields parses the protobuf event data for the given event ID.
@@ -250,12 +254,10 @@ func ParseDataFields(data []*pb.EventValue, eventID int) error {
 	}
 
 	// Parse extended events (only available in extended builds)
-	//parseEventDataExtended(evtID, data)
+	parseEventDataExtended(evtID, data)
 
 	return nil
 }
-
-/*
 
 // ParseDataFieldsFDs parses file descriptor arguments in the protobuf event data.
 func ParseDataFieldsFDs(data []*pb.EventValue, origTimestamp uint64, fdArgPathMap *bpf.BPFMap) error {
@@ -281,8 +283,6 @@ func ParseDataFieldsFDs(data []*pb.EventValue, origTimestamp uint64, fdArgPathMa
 
 	return nil
 }
-
-*/
 
 // GetFieldValue returns the EventValue with the specified name from the data slice.
 // Returns nil if not found.

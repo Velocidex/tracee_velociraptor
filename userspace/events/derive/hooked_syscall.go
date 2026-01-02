@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"sync"
 
+	lru "github.com/hashicorp/golang-lru/v2"
+
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
+	"github.com/Velocidex/tracee_velociraptor/userspace/datastores/symbol"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/parse"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
-	symbol "github.com/Velocidex/tracee_velociraptor/userspace/utils/environment"
-	lru "github.com/hashicorp/golang-lru/v2"
 )
 
 const (

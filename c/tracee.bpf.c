@@ -1386,7 +1386,7 @@ int tracepoint__sched__sched_process_exec(struct bpf_raw_tracepoint_args *ctx)
     program_data_t p = {};
     if (!init_program_data(&p, ctx, SCHED_PROCESS_EXEC))
         return 0;
-
+    
     // Reset thread stack area
     p.task_info->stack = (address_range_t){0};
 
@@ -1440,7 +1440,7 @@ int tracepoint__sched__sched_process_exec(struct bpf_raw_tracepoint_args *ctx)
     save_str_to_buf(&p.event->args_buf, (void *) filename, 0);                   // executable name
     save_str_to_buf(&p.event->args_buf, file_path, 1);                           // executable path
     save_to_submit_buf(&p.event->args_buf, &s_dev, sizeof(dev_t), 2);            // device number
-    save_to_submit_buf(&p.event->args_buf, &inode_nr, sizeof(unsigned long), 3); // inode number
+    save_to_submit_buf(&p.event->args_buf, &inode_nr, sizeof(unsigned long), 3); // inode number 
     save_to_submit_buf(&p.event->args_buf, &ctime, sizeof(u64), 4);              // changed time
     save_to_submit_buf(&p.event->args_buf, &inode_mode, sizeof(umode_t), 5);     // inode mode
 
@@ -6343,7 +6343,7 @@ int BPF_KPROBE(trace_security_socket_recvmsg)
 
     if (!evaluate_scope_filters(&p))
         return 0;
-
+    
     // initialize task context before submit since it will not be available when
     // submitting the network event.
     init_task_context(&p.event->context.task, p.event->task, p.config->options);
@@ -6372,7 +6372,7 @@ int BPF_KPROBE(trace_security_socket_sendmsg)
 
     if (!evaluate_scope_filters(&p))
         return 0;
-
+    
     // initialize task context before submit since it will not be available when
     // submitting the network event.
     init_task_context(&p.event->context.task, p.event->task, p.config->options);
@@ -7408,7 +7408,7 @@ int sched_process_exec_signal(struct bpf_raw_tracepoint_args *ctx)
     save_to_submit_buf(&signal->args_buf, &stdin_type, sizeof(unsigned short), 19);              // stdin type
     save_str_to_buf(&signal->args_buf, stdin_path, 20);                                          // stdin path
     save_to_submit_buf(&signal->args_buf, &invoked_from_kernel, sizeof(bool), 21);               // invoked from kernel ?
-
+    
     signal_perf_submit(ctx, signal);
 
     return 0;
@@ -7585,12 +7585,10 @@ int uprobe__features_fallback_arena(struct pt_regs *ctx)
     if (!init_program_data(&p, ctx, FEATURES_FALLBACK_TEST))
         return 0;
 
-    /*
     // Use ARENA map - shared memory between BPF and userspace (6.9+)
     // The presence of this map in a loadable program indicates ARENA support
-    volatile void *arena_test = (void *) &features_test_arena;
+    volatile void *arena_test = NULL;
     (void) arena_test; // Use it to prevent optimization
-    */
 
     // Use bpf_get_current_task_btf helper (5.11+)
     struct task_struct *task = (struct task_struct *) bpf_get_current_task_btf();

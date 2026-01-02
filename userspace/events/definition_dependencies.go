@@ -5,7 +5,7 @@ import (
 
 	"kernel.org/pub/linux/libs/security/libcap/cap"
 
-	"github.com/Velocidex/tracee_velociraptor/userspace/probes"
+	"github.com/Velocidex/tracee_velociraptor/userspace/ebpf/probes"
 )
 
 // DependencyStrategy implements the Strategy pattern for event dependency resolution.
