@@ -4,19 +4,20 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/Velocidex/tracee_velociraptor/userspace/dnscache"
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
+	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
+	"github.com/Velocidex/tracee_velociraptor/userspace/parsers"
+	"github.com/Velocidex/tracee_velociraptor/userspace/datastores/dns"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/parse"
-	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 
 // NOTE: Derived from security_socket_XXX events, not from net_packet_XXX ones.
 
-func NetTCPConnect(cache *dnscache.DNSCache) DeriveFunction {
+func NetTCPConnect(cache *dns.DNSCache) DeriveFunction {
 	return deriveSingleEvent(events.NetTCPConnect,
-		func(event trace.Event) ([]interface{}, error) {
+		func(event *trace.Event) ([]interface{}, error) {
 			dstIP, dstPort, err := pickIpAndPort(event, "remote_addr")
 			if err != nil {
 				logger.Debugw("error picking address", "error", err)
@@ -32,7 +33,7 @@ func NetTCPConnect(cache *dnscache.DNSCache) DeriveFunction {
 				query, err := cache.Get(dstIP)
 				if err != nil {
 					switch err {
-					case dnscache.ErrDNSRecordNotFound, dnscache.ErrDNSRecordExpired:
+					case dns.ErrDNSRecordNotFound, dns.ErrDNSRecordExpired:
 						results = []string{}
 						goto allGood
 					}
@@ -53,16 +54,16 @@ func NetTCPConnect(cache *dnscache.DNSCache) DeriveFunction {
 }
 
 // pickIpAndPort returns the IP address and port from the event's sockaddr field.
-func pickIpAndPort(event trace.Event, fieldName string) (string, int, error) {
+func pickIpAndPort(event *trace.Event, fieldName string) (string, int, error) {
 	var err error
 	// e.g: sockaddr: map[sa_family:AF_INET sin_addr:10.10.11.2 sin_port:1234]
 
 	// Check if socket is a TCP socket.
-	sType, err := parse.ArgVal[string](event.Args, "type")
+	sType, err := parse.ArgVal[int32](event.Args, "type")
 	if err != nil {
 		return "", 0, errfmt.WrapError(err)
 	}
-	if sType != "SOCK_STREAM" {
+	if sType != int32(parsers.SOCK_STREAM.Value()) {
 		return "", 0, nil
 	}
 

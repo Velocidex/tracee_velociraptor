@@ -2,13 +2,15 @@ package derive
 
 import (
 	"fmt"
+	"sync"
+
+	lru "github.com/hashicorp/golang-lru/v2"
 
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
+	"github.com/Velocidex/tracee_velociraptor/userspace/datastores/symbol"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/parse"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
-	"github.com/Velocidex/tracee_velociraptor/userspace/utils/environment"
-	lru "github.com/hashicorp/golang-lru/v2"
 )
 
 const (
@@ -17,50 +19,66 @@ const (
 
 var (
 	reportedHookedSyscalls *lru.Cache[int32, uint64]
+	initOnce               sync.Once
+	initErr                error
 )
 
-// InitHookedSyscall initialize lru
+// InitHookedSyscall initialize lru (thread-safe, only runs once)
 func InitHookedSyscall() error {
-	var err error
-	reportedHookedSyscalls, err = lru.New[int32, uint64](maxSysCallTableSize)
-	return err
+	initOnce.Do(func() {
+		reportedHookedSyscalls, initErr = lru.New[int32, uint64](maxSysCallTableSize)
+	})
+	return initErr
 }
 
-func DetectHookedSyscall(kernelSymbols *environment.KernelSymbolTable) DeriveFunction {
-	return deriveSingleEvent(events.HookedSyscall, deriveDetectHookedSyscallArgs(kernelSymbols))
+// resetHookedSyscallForTesting resets the cache and initialization state for testing purposes only
+func resetHookedSyscallForTesting() error {
+	// No mutex is needed since the tests run sequentially (critical assumption)
+	initOnce = sync.Once{}
+	reportedHookedSyscalls = nil
+	initErr = nil
+
+	return InitHookedSyscall()
 }
 
-func deriveDetectHookedSyscallArgs(kernelSymbols *environment.KernelSymbolTable) deriveArgsFunction {
-	return func(event trace.Event) ([]interface{}, error) {
+func DetectHookedSyscall(kernelSymbols *symbol.KernelSymbolTable) DeriveFunction {
+	return deriveMultipleEvents(events.HookedSyscall, deriveDetectHookedSyscallArgs(kernelSymbols))
+}
+
+func deriveDetectHookedSyscallArgs(kernelSymbols *symbol.KernelSymbolTable) multiDeriveArgsFunction {
+	return func(event *trace.Event) ([][]interface{}, []error) {
 		syscallId, err := parse.ArgVal[int32](event.Args, "syscall_id")
 		if err != nil {
-			return nil, errfmt.Errorf("error parsing syscall_id arg: %v", err)
+			return nil, []error{errfmt.Errorf("error parsing syscall_id arg: %v", err)}
 		}
 
 		address, err := parse.ArgVal[uint64](event.Args, "syscall_address")
 		if err != nil {
-			return nil, errfmt.Errorf("error parsing syscall_address arg: %v", err)
+			return nil, []error{errfmt.Errorf("error parsing syscall_address arg: %v", err)}
 		}
 
+		// Cache hit: don't report the same syscall_id and address again
 		alreadyReportedAddress, found := reportedHookedSyscalls.Get(syscallId)
 		if found && alreadyReportedAddress == address {
 			return nil, nil
 		}
 
-		reportedHookedSyscalls.Add(syscallId, address) // Upsert
-
-		hookedFuncName := ""
-		hookedOwner := ""
-		hookedFuncSymbol, err := kernelSymbols.GetSymbolByAddr(address)
-		if err == nil {
-			hookedFuncName = hookedFuncSymbol[0].Name
-			hookedOwner = hookedFuncSymbol[0].Owner
-		}
+		reportedHookedSyscalls.Add(syscallId, address) // Upsert: if the key already exists, the value is updated
 
 		syscallName := convertToSyscallName(syscallId)
 		hexAddress := fmt.Sprintf("%x", address)
 
-		return []interface{}{syscallName, hexAddress, hookedFuncName, hookedOwner}, nil
+		hookedFuncSymbols, err := kernelSymbols.GetSymbolByAddr(address)
+		if err != nil {
+			return [][]interface{}{{syscallName, hexAddress, "", ""}}, nil
+		}
+
+		events := make([][]interface{}, 0)
+		for _, symbol := range hookedFuncSymbols {
+			events = append(events, []interface{}{syscallName, hexAddress, symbol.Name, symbol.Owner})
+		}
+
+		return events, nil
 	}
 }
 

@@ -3,6 +3,7 @@
 
 #include <vmlinux.h>
 
+#include <types.h>
 #include <common/context.h>
 #include <common/hash.h>
 #include <common/network.h>
@@ -14,13 +15,14 @@ statfunc data_filter_key_t *get_string_data_filter_buf(int);
 statfunc data_filter_lpm_key_t *get_string_data_filter_lpm_buf(int);
 statfunc int reverse_string(char *, char *, int, int);
 statfunc int save_to_submit_buf(args_buffer_t *, void *, u32, u8);
+statfunc int save_bytes_to_buf_max(args_buffer_t *, void *, u32, u32, u8);
 statfunc int save_bytes_to_buf(args_buffer_t *, void *, u32, u8);
 statfunc int save_str_to_buf(args_buffer_t *, void *, u8);
 statfunc int add_u64_elements_to_buf(args_buffer_t *, const u64 __user *, int, volatile u32);
 statfunc int save_u64_arr_to_buf(args_buffer_t *, const u64 __user *, int, u8);
 statfunc int save_str_arr_to_buf(args_buffer_t *, const char __user *const __user *, u8);
 statfunc int save_args_str_arr_to_buf(args_buffer_t *, const char *, const char *, int, u8);
-statfunc int save_sockaddr_to_buf(args_buffer_t *, struct socket *, u8);
+statfunc int save_sockaddr_to_buf(args_buffer_t *, struct socket *, bool, u8);
 statfunc int save_args_to_submit_buf(event_data_t *, args_t *);
 statfunc int events_perf_submit(program_data_t *, long);
 statfunc int signal_perf_submit(void *, controlplane_signal_t *);
@@ -43,7 +45,7 @@ statfunc data_filter_lpm_key_t *get_string_data_filter_lpm_buf(int idx)
 }
 
 // biggest elem to be saved with 'save_to_submit_buf' should be defined here:
-#define MAX_ELEMENT_SIZE bpf_core_type_size(struct sockaddr_un)
+#define MAX_ELEMENT_SIZE sizeof(struct sockaddr_un)
 
 statfunc int reverse_string(char *dst, char *src, int src_off, int len)
 {
@@ -82,66 +84,123 @@ statfunc int save_to_submit_buf(args_buffer_t *buf, void *ptr, u32 size, u8 inde
 {
     // Data saved to submit buf: [index][ ... buffer[size] ... ]
 
-    if (size == 0)
-        return 0;
-
     barrier();
-    if (buf->offset > ARGS_BUF_SIZE - 1)
+    // set argument size bounds
+    if (size == 0 || size > MAX_ELEMENT_SIZE || buf->offset >= ARGS_BUF_SIZE)
         return 0;
 
-    // Save argument index
+    u32 buffer_index_offset = buf->offset + 1; // buffer offset after writing the index
+    if (buffer_index_offset > ARGS_BUF_SIZE)
+        return 0;
+
+    // Save argument index (add 1 to offset later)
     buf->args[buf->offset] = index;
 
-    // Satisfy verifier
-    if (buf->offset > ARGS_BUF_SIZE - (MAX_ELEMENT_SIZE + 1))
+    // Force verifier to compare size register with a bound maximum
+    asm volatile("if %[size] < %[max_size] goto +1;\n"
+                 "%[size] = %[max_size];\n"
+                 :
+                 : [size] "r"(size), [max_size] "i"(MAX_ELEMENT_SIZE));
+
+    u32 buffer_arg_offset = buffer_index_offset + size; // buffer offset after writing the ptr
+
+    // Satisfy verifier - offset+index+size(offset+size+1) must not go above ARGS_BUF_SIZE
+    if (buffer_arg_offset > ARGS_BUF_SIZE)
         return 0;
 
-    // Read into buffer
-    if (bpf_probe_read(&(buf->args[buf->offset + 1]), size, ptr) == 0) {
-        // We update offset only if all writes were successful
-        buf->offset += size + 1;
-        buf->argnum++;
-        return 1;
-    }
+    // Read into buffer after the argument index
+    if (bpf_probe_read(&(buf->args[buffer_index_offset]), size, ptr) < 0)
+        return 0;
 
-    return 0;
+    // Update buffer only if all writes were successful:
+    // 1. Update the buffer offset
+    // 2. Increment the argument count
+    buf->offset = buffer_arg_offset;
+    buf->argnum++;
+    return 1;
 }
 
-statfunc int save_bytes_to_buf(args_buffer_t *buf, void *ptr, u32 size, u8 index)
-{
-    // Data saved to submit buf: [index][size][ ... bytes ... ]
+// Arguments buffer layout
+// [index:1 byte][size:4 bytes][data:N bytes]
+// |<-------- Header -------->||<-- Data -->|
+// where:
+// - Header:
+//   index: 1 byte - argument index for identification (u8)
+//   size:  4 bytes - size of the data that follows, may be truncated (u32)
+// - Data:  N bytes - the actual data to save, truncated to max_size-1 if needed (u8[N])
+//
+#define ARGS_BUFFER_INDEX_FIELD_SIZE  sizeof(u8)
+#define ARGS_BUFFER_HEADER_SIZE       (ARGS_BUFFER_INDEX_FIELD_SIZE + sizeof(u32))
+#define ARGS_BUFFER_SIZE_FIELD_OFFSET ARGS_BUFFER_INDEX_FIELD_SIZE
+#define ARGS_BUFFER_DATA_FIELD_OFFSET ARGS_BUFFER_HEADER_SIZE
 
+// ENSURE_ARGS_BUFFER_SPACE checks if buffer has space for header + data.
+// Must be called before each buffer write as verifier loses bounds tracking after memory
+// operations.
+// Uses max_size (not actual size) so BPF verifier can prove worst-case bounds.
+#define ENSURE_ARGS_BUFFER_SPACE(_buf, _data_size)                                                 \
+    ({                                                                                             \
+        if ((_buf)->offset > ARGS_BUF_SIZE - (ARGS_BUFFER_HEADER_SIZE + (_data_size)))             \
+            return 0;                                                                              \
+    })
+
+// save_bytes_to_buf_max saves a byte array to the buffer for a specific argument
+// with a configurable maximum size limit.
+//
+// The data is saved using the arguments buffer layout (see above).
+//
+// Parameters:
+//   buf: buffer to save data to
+//   ptr: pointer to data to save
+//   size: actual size of data to save
+//   max_size: maximum allowed size (data will be truncated to max_size-1 if larger)
+//   index: argument index for identification
+// Returns: 1 on success, 0 on failure
+statfunc int save_bytes_to_buf_max(args_buffer_t *buf, void *ptr, u32 size, u32 max_size, u8 index)
+{
     if (size == 0)
         return 0;
-
-    if (buf->offset > ARGS_BUF_SIZE - 1)
+    if (max_size == 0)
         return 0;
+
+    u32 rsize = size;
+    if (rsize >= max_size) {
+        if (max_size <= 1)
+            return 0; // avoid underflow/zero-length data (should never happen)
+        rsize = max_size - 1;
+    }
 
     // Save argument index
+    ENSURE_ARGS_BUFFER_SPACE(buf, max_size);
     buf->args[buf->offset] = index;
 
-    if (buf->offset > ARGS_BUF_SIZE - (sizeof(int) + 1))
+    // Save size field
+    ENSURE_ARGS_BUFFER_SPACE(buf, max_size);
+    if (bpf_probe_read(
+            &(buf->args[buf->offset + ARGS_BUFFER_SIZE_FIELD_OFFSET]), sizeof(u32), &rsize) != 0)
         return 0;
 
-    // Save size to buffer
-    if (bpf_probe_read(&(buf->args[buf->offset + 1]), sizeof(int), &size) != 0) {
+    // Save data
+    ENSURE_ARGS_BUFFER_SPACE(buf, max_size);
+    if (rsize >= max_size) {
+        // Help older verifiers (kernel 5.4) to prove bounds correctly by checking it again.
+        // TODO: remove this additional check once older kernels are no longer supported.
         return 0;
     }
-
-    if (buf->offset > ARGS_BUF_SIZE - (MAX_BYTES_ARR_SIZE + 1 + sizeof(int)))
+    if (bpf_probe_read(&(buf->args[buf->offset + ARGS_BUFFER_DATA_FIELD_OFFSET]), rsize, ptr) != 0)
         return 0;
 
-    // Read bytes into buffer
-    if (bpf_probe_read(&(buf->args[buf->offset + 1 + sizeof(int)]),
-                       size & (MAX_BYTES_ARR_SIZE - 1),
-                       ptr) == 0) {
-        // We update offset only if all writes were successful
-        buf->offset += size + 1 + sizeof(int);
-        buf->argnum++;
-        return 1;
-    }
+    // Update offset
+    buf->offset += ARGS_BUFFER_HEADER_SIZE + rsize;
+    buf->argnum++;
 
-    return 0;
+    return 1;
+}
+
+// save_bytes_to_buf wraps save_bytes_to_buf_max with MAX_BYTES_ARR_SIZE as the maximum size.
+statfunc int save_bytes_to_buf(args_buffer_t *buf, void *ptr, u32 size, u8 index)
+{
+    return save_bytes_to_buf_max(buf, ptr, size, MAX_BYTES_ARR_SIZE, index);
 }
 
 statfunc int load_str_from_buf(args_buffer_t *buf, char *str, u8 index, enum str_filter_type_e type)
@@ -251,7 +310,7 @@ add_u64_elements_to_buf(args_buffer_t *buf, const u64 __user *ptr, int len, vola
     // save count_off into a new variable to avoid verifier errors
     u32 off = count_off;
     u8 elem_num = 0;
-#pragma unroll
+
     for (int i = 0; i < len; i++) {
         void *addr = &(buf->args[buf->offset]);
         if (buf->offset > ARGS_BUF_SIZE - sizeof(u64))
@@ -348,9 +407,9 @@ statfunc int save_str_arr_to_buf(args_buffer_t *buf, const char __user *const __
     }
     // handle truncated argument list
     char ellipsis[] = "...";
-    if (buf->offset > ARGS_BUF_SIZE - MAX_STRING_SIZE - sizeof(int))
-        // not enough space - return
-        goto out;
+
+    // Clamp buffer offset to prevent overflow
+    update_min(buf->offset, ARGS_BUF_SIZE - MAX_STRING_SIZE - sizeof(int));
 
     // Read into buffer
     int sz = bpf_probe_read_str(&(buf->args[buf->offset + sizeof(int)]), MAX_STRING_SIZE, ellipsis);
@@ -376,8 +435,12 @@ out:
 statfunc int save_args_str_arr_to_buf(
     args_buffer_t *buf, const char *start, const char *end, int elem_num, u8 index)
 {
-    // Data saved to submit buf: [index][len][arg_len][arg #][null delimited string array]
-    // Note: This helper saves null (0x00) delimited string array into buf
+    // Data saved to submit buf: [index][len][arg_len][arg #][array of null delimited string]
+    // Note: This helper saves null (0x00) delimited string array into buf in the format:
+    // [ char_arr1[0]  char_arr1[1]  ...  char_arr1[n-1]  '\0',
+    //   char_arr2[0]  char_arr2[1]  ...  char_arr2[n-1]  '\0',
+    //   ...
+    //   char_arrn[0]  char_arrn[1]  ...  char_arrn[n-1]  '\0' ]
 
     if (start >= end)
         return 0;
@@ -420,7 +483,8 @@ statfunc int save_args_str_arr_to_buf(
     return 0;
 }
 
-statfunc int save_sockaddr_to_buf(args_buffer_t *buf, struct socket *sock, u8 index)
+statfunc int
+save_sockaddr_to_buf(args_buffer_t *buf, struct socket *sock, bool local_address, u8 index)
 {
     struct sock *sk = get_socket_sock(sock);
 
@@ -431,63 +495,70 @@ statfunc int save_sockaddr_to_buf(args_buffer_t *buf, struct socket *sock, u8 in
 
     if (family == AF_INET) {
         net_conn_v4_t net_details = {};
-        struct sockaddr_in local;
+        struct sockaddr_in addr;
 
         get_network_details_from_sock_v4(sk, &net_details, 0);
-        get_local_sockaddr_in_from_network_details(&local, &net_details, family);
+        if (local_address)
+            get_local_sockaddr_in_from_network_details(&addr, &net_details, family);
+        else
+            get_remote_sockaddr_in_from_network_details(&addr, &net_details, family);
 
-        save_to_submit_buf(buf, (void *) &local, bpf_core_type_size(struct sockaddr_in), index);
+        // NOTE: for stack allocated, use sizeof instead of bpf_core_type_size
+        save_to_submit_buf(buf, (void *) &addr, sizeof(addr), index);
     } else if (family == AF_INET6) {
         net_conn_v6_t net_details = {};
-        struct sockaddr_in6 local;
+        struct sockaddr_in6 addr;
 
         get_network_details_from_sock_v6(sk, &net_details, 0);
-        get_local_sockaddr_in6_from_network_details(&local, &net_details, family);
+        if (local_address)
+            get_local_sockaddr_in6_from_network_details(&addr, &net_details, family);
+        else
+            get_remote_sockaddr_in6_from_network_details(&addr, &net_details, family);
 
-        save_to_submit_buf(buf, (void *) &local, bpf_core_type_size(struct sockaddr_in6), index);
+        // NOTE: for stack allocated, use sizeof instead of bpf_core_type_size
+        save_to_submit_buf(buf, (void *) &addr, sizeof(addr), index);
     } else if (family == AF_UNIX) {
         struct unix_sock *unix_sk = (struct unix_sock *) sk;
         struct sockaddr_un sockaddr = get_unix_sock_addr(unix_sk);
-        save_to_submit_buf(buf, (void *) &sockaddr, bpf_core_type_size(struct sockaddr_un), index);
+
+        // NOTE: for stack allocated, use sizeof instead of bpf_core_type_size
+        save_to_submit_buf(buf, (void *) &sockaddr, sizeof(sockaddr), index);
     }
+
     return 0;
 }
 
 #define DEC_ARG(n, enc_arg) ((enc_arg >> (8 * n)) & 0xFF)
 
-#define BITMASK_INDIRECT_VALUE_TYPES                                                               \
-    ((u64) 1 << STR_T | (u64) 1 << SOCKADDR_T | (u64) 1 << INT_ARR_2_T | (u64) 1 << TIMESPEC_T)
+// types whose data needs to be directly in type_size_table (arg = (void *) args->args[i])
+#define BITMASK_POINTER_TYPES                                                                      \
+    ((u64) 1 << INT_ARR_2_T | (u64) 1 << STR_T | (u64) 1 << SOCKADDR_T | (u64) 1 << TIMESPEC_T)
 
-#define BITMASK_COMMON_TYPES                                                                       \
+// types whose data needs to be handled through their address in type_size_table
+// ((arg = (void *) &args->args[i]))
+#define BITMASK_VALUE_TYPES                                                                        \
     ((u64) 1 << INT_T | (u64) 1 << UINT_T | (u64) 1 << LONG_T | (u64) 1 << ULONG_T |               \
-     (u64) 1 << OFF_T_T | (u64) 1 << MODE_T_T | (u64) 1 << DEV_T_T | (u64) 1 << SIZE_T_T |         \
-     (u64) 1 << POINTER_T | (u64) 1 << STR_ARR_T | (u64) 1 << BYTES_T | (u64) 1 << U16_T |         \
-     (u64) 1 << CRED_T | (u64) 1 << UINT64_ARR_T | (u64) 1 << U8_T)
+     (u64) 1 << U16_T | (u64) 1 << U8_T | (u64) 1 << UINT64_ARR_T | (u64) 1 << POINTER_T |         \
+     (u64) 1 << BYTES_T | (u64) 1 << STR_ARR_T | (u64) 1 << U8_T)
 
-#define ARG_TYPE_MAX_ARRAY (u8) TIMESPEC_T // last element defined in argument_type_e
-
-// Ensure that only values that can be held by an u8 are assigned to sizes.
+// Ensure that only values that can be held by an u32 are assigned to sizes.
 // If the size is greater than 255, assign 0 (making it evident) and handle it as a special case.
-static u8 type_size_table[ARG_TYPE_MAX_ARRAY + 1] = {
+static u32 type_size_table[ARG_TYPE_MAX_ARRAY + 1] = {
     [NONE_T] = 0,
     [INT_T] = sizeof(int),
-    [UINT_T] = sizeof(unsigned int),
+    [UINT_T] = sizeof(uint),
     [LONG_T] = sizeof(long),
     [ULONG_T] = sizeof(unsigned long),
-    [OFF_T_T] = sizeof(off_t),
-    [MODE_T_T] = sizeof(mode_t),
-    [DEV_T_T] = sizeof(dev_t),
-    [SIZE_T_T] = sizeof(size_t),
+    [U16_T] = sizeof(u16),
+    [U8_T] = sizeof(u8),
+    [INT_ARR_2_T] = sizeof(int[2]),
+    [UINT64_ARR_T] = 0,
     [POINTER_T] = sizeof(void *),
+    [BYTES_T] = 0,
     [STR_T] = 0,
     [STR_ARR_T] = 0,
     [SOCKADDR_T] = sizeof(short),
-    [BYTES_T] = 0,
-    [U16_T] = sizeof(u16),
     [CRED_T] = sizeof(struct cred),
-    [INT_ARR_2_T] = sizeof(int[2]),
-    [UINT64_ARR_T] = 0,
-    [U8_T] = sizeof(u8),
     [TIMESPEC_T] = 0,
 };
 
@@ -518,16 +589,16 @@ statfunc int save_args_to_submit_buf(event_data_t *event, args_t *args)
             continue;
         type_mask = (u64) 1 << type; // type value must be < 64
 
-        if (BITMASK_INDIRECT_VALUE_TYPES & type_mask)
+        if (BITMASK_POINTER_TYPES & type_mask)
             arg = (void *) args->args[i];
         else
             arg = (void *) &args->args[i];
 
-        // handle common types
-        if (BITMASK_COMMON_TYPES & type_mask)
+        // handle value types
+        if (BITMASK_VALUE_TYPES & type_mask)
             goto save_arg;
 
-        // handle special types
+        // handle pointer types
         switch (type) {
             case STR_T:
                 rc = save_str_to_buf(&(event->args_buf), arg, i);
@@ -592,6 +663,20 @@ struct events_stats {
 typedef struct events_stats events_stats_t;
 #endif
 
+// update_event_stats updates the statistics for an event submission
+statfunc void update_event_stats(u32 event_id, long perf_ret)
+{
+#ifdef METRICS
+    event_stats_values_t *evt_stat = bpf_map_lookup_elem(&events_stats, &event_id);
+    if (unlikely(evt_stat == NULL))
+        return;
+
+    __sync_fetch_and_add(&evt_stat->attempts, 1);
+    if (perf_ret < 0)
+        __sync_fetch_and_add(&evt_stat->failures, 1);
+#endif
+}
+
 statfunc int events_perf_submit(program_data_t *p, long ret)
 {
     p->event->context.retval = ret;
@@ -620,16 +705,7 @@ statfunc int events_perf_submit(program_data_t *p, long ret)
 
     long perf_ret = bpf_perf_event_output(p->ctx, &events, BPF_F_CURRENT_CPU, p->event, size);
 
-#ifdef METRICS
-    // update event stats
-    event_stats_values_t *evt_stat = bpf_map_lookup_elem(&events_stats, &p->event->context.eventid);
-    if (unlikely(evt_stat == NULL))
-        return perf_ret;
-
-    __sync_fetch_and_add(&evt_stat->attempts, 1);
-    if (perf_ret < 0)
-        __sync_fetch_and_add(&evt_stat->failures, 1);
-#endif
+    update_event_stats(p->event->context.eventid, perf_ret);
 
     return perf_ret;
 }
@@ -645,7 +721,11 @@ statfunc int signal_perf_submit(void *ctx, controlplane_signal_t *sig)
                  :
                  : [size] "r"(size), [max_size] "i"(MAX_SIGNAL_SIZE));
 
-    return bpf_perf_event_output(ctx, &signals, BPF_F_CURRENT_CPU, sig, size);
+    long perf_ret = bpf_perf_event_output(ctx, &signals, BPF_F_CURRENT_CPU, sig, size);
+
+    update_event_stats(sig->event_id, perf_ret);
+
+    return perf_ret;
 }
 
 #endif

@@ -7,25 +7,6 @@
 
 #include <types.h>
 
-enum tail_call_id_e
-{
-    TAIL_VFS_WRITE,
-    TAIL_VFS_WRITEV,
-    TAIL_SEND_BIN,
-    TAIL_SEND_BIN_TP,
-    TAIL_KERNEL_WRITE,
-    TAIL_SCHED_PROCESS_EXEC_EVENT_SUBMIT,
-    TAIL_VFS_READ,
-    TAIL_VFS_READV,
-    TAIL_PROCESS_EXECUTE_FAILED,
-    TAIL_HIDDEN_KERNEL_MODULE_PROC,
-    TAIL_HIDDEN_KERNEL_MODULE_KSET,
-    TAIL_HIDDEN_KERNEL_MODULE_MOD_TREE,
-    TAIL_HIDDEN_KERNEL_MODULE_NEW_MOD_ONLY,
-    TAIL_HIDDEN_KERNEL_MODULE_MODTREE_LOOP,
-    MAX_TAIL_CALL
-};
-
 // kernel config variables
 struct kconfig_map {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -443,7 +424,7 @@ struct uid_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, u32);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } uid_filter SEC(".maps");
 
 typedef struct uid_filter uid_filter_t;
@@ -483,7 +464,7 @@ struct mnt_ns_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, u32);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } mnt_ns_filter SEC(".maps");
 
 typedef struct mnt_ns_filter mnt_ns_filter_t;
@@ -503,7 +484,7 @@ struct pid_ns_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, u32);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } pid_ns_filter SEC(".maps");
 
 typedef struct pid_ns_filter pid_ns_filter_t;
@@ -523,7 +504,7 @@ struct uts_ns_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, string_filter_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } uts_ns_filter SEC(".maps");
 
 typedef struct uts_ns_filter uts_ns_filter_t;
@@ -543,7 +524,7 @@ struct data_filter_exact {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 1024);
     __type(key, data_filter_key_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } data_filter_exact SEC(".maps");
 
 typedef struct data_filter_exact data_filter_exact_t;
@@ -563,7 +544,7 @@ struct data_filter_suffix {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __uint(max_entries, 1024);
     __type(key, data_filter_lpm_key_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
     __uint(map_flags, BPF_F_NO_PREALLOC);
 } data_filter_suffix SEC(".maps");
 
@@ -584,7 +565,7 @@ struct data_filter_prefix {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __uint(max_entries, 1024);
     __type(key, data_filter_lpm_key_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
     __uint(map_flags, BPF_F_NO_PREALLOC);
 } data_filter_prefix SEC(".maps");
 
@@ -605,7 +586,7 @@ struct comm_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, string_filter_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } comm_filter SEC(".maps");
 
 typedef struct comm_filter comm_filter_t;
@@ -625,7 +606,7 @@ struct cgroup_id_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, u32);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } cgroup_id_filter SEC(".maps");
 
 typedef struct cgroup_id_filter cgroup_id_filter_t;
@@ -645,7 +626,7 @@ struct binary_filter {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
     __type(key, binary_t);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } binary_filter SEC(".maps");
 
 typedef struct binary_filter binary_filter_t;
@@ -665,7 +646,7 @@ struct process_tree_map {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 10240);
     __type(key, u32);
-    __type(value, eq_t);
+    __type(value, struct equality);
 } process_tree_map SEC(".maps");
 
 typedef struct process_tree_map process_tree_map_t;
@@ -743,5 +724,14 @@ struct signals {
 } signals SEC(".maps");
 
 typedef struct signals signals_t;
+
+//
+// Test maps for features fallback test
+//
+
+// ARENA map for Level 1 (fentry + ARENA + bpf_get_current_task_btf) - Linux 6.9+
+
+
+// No additional maps needed - testing ARENA only for Level 1
 
 #endif /* __MAPS_H__ */

@@ -9,7 +9,7 @@ else
 endif
 
 LIBBPF_MAJOR_VERSION := 1
-LIBBPF_MINOR_VERSION := 5
+LIBBPF_MINOR_VERSION := 7
 LIBBPF_PATCH_VERSION := 0
 LIBBPF_VERSION := $(LIBBPF_MAJOR_VERSION).$(LIBBPF_MINOR_VERSION).$(LIBBPF_PATCH_VERSION)
 LIBBPF_MAJMIN_VERSION := $(LIBBPF_MAJOR_VERSION).$(LIBBPF_MINOR_VERSION).0
@@ -26,6 +26,7 @@ endef
 
 $(call allow-override,CC,$(CROSS_COMPILE)cc)
 $(call allow-override,LD,$(CROSS_COMPILE)ld)
+PKG_CONFIG ?= pkg-config
 
 TOPDIR = ..
 
@@ -41,10 +42,12 @@ ALL_CFLAGS += $(CFLAGS) 						\
 	      $(EXTRA_CFLAGS)
 ALL_LDFLAGS += $(LDFLAGS) $(EXTRA_LDFLAGS)
 
+ifeq ($(shell command -v $(PKG_CONFIG) 2> /dev/null),)
+NO_PKG_CONFIG := 1
+endif
 ifdef NO_PKG_CONFIG
 	ALL_LDFLAGS += -lelf -lz
 else
-	PKG_CONFIG ?= pkg-config
 	ALL_CFLAGS += $(shell $(PKG_CONFIG) --cflags libelf zlib)
 	ALL_LDFLAGS += $(shell $(PKG_CONFIG) --libs libelf zlib)
 endif
@@ -52,9 +55,9 @@ endif
 OBJDIR ?= .
 SHARED_OBJDIR := $(OBJDIR)/sharedobjs
 STATIC_OBJDIR := $(OBJDIR)/staticobjs
-OBJS := bpf.o btf.o libbpf.o libbpf_errno.o netlink.o \
-	nlattr.o str_error.o libbpf_probes.o bpf_prog_linfo.o \
-	btf_dump.o hashmap.o ringbuf.o strset.o linker.o gen_loader.o \
+OBJS := bpf.o btf.o libbpf.o libbpf_utils.o netlink.o 			\
+	nlattr.o libbpf_probes.o bpf_prog_linfo.o 			\
+	btf_dump.o hashmap.o ringbuf.o strset.o linker.o gen_loader.o 	\
 	relo_core.o usdt.o zip.o elf.o features.o btf_iter.o btf_relocate.o
 SHARED_OBJS := $(addprefix $(SHARED_OBJDIR)/,$(OBJS))
 STATIC_OBJS := $(addprefix $(STATIC_OBJDIR)/,$(OBJS))

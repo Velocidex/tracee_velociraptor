@@ -85,8 +85,7 @@
 #define _IOW(type, nr, size)   _IOC(_IOC_WRITE, (type), (nr), (_IOC_TYPECHECK(size)))
 #define PERF_EVENT_IOC_SET_BPF _IOW('$', 8, __u32)
 
-enum perf_type_id
-{
+enum perf_type_id {
     PERF_TYPE_HARDWARE = 0,
     PERF_TYPE_SOFTWARE = 1,
     PERF_TYPE_TRACEPOINT = 2,
@@ -112,13 +111,17 @@ enum perf_type_id
     #define PAGE_SIZE  (_AC(1, UL) << PAGE_SHIFT)
     #define PAGE_MASK  (~(PAGE_SIZE - 1))
 
+    // # ifdef CONFIG_X86_FRED
+    #define TOP_OF_KERNEL_STACK_PADDING_FRED (2 * 8)
+    // # else
     #define TOP_OF_KERNEL_STACK_PADDING 0
+    // # endif
 
 #elif defined(__TARGET_ARCH_arm64)
 
     // extern bool CONFIG_ARM64_PAGE_SHIFT __kconfig;
     //  arch/arm64/include/asm/page-def.h
-    //#define PAGE_SHIFT        CONFIG_ARM64_PAGE_SHIFT
+    // #define PAGE_SHIFT        CONFIG_ARM64_PAGE_SHIFT
     //  as a temporary workaround for failing builds, use the default value of PAGE_SHIFT
     #define PAGE_SHIFT       12
     #define PAGE_SIZE        (_AC(1, UL) << PAGE_SHIFT)
@@ -127,7 +130,7 @@ enum perf_type_id
     #define _TIF_32BIT       (1 << 22)
 
     // arch/arm64/include/asm/memory.h
-    //#define MIN_THREAD_SHIFT	(14 + KASAN_THREAD_SHIFT)
+    // #define MIN_THREAD_SHIFT	(14 + KASAN_THREAD_SHIFT)
     #define MIN_THREAD_SHIFT 14 // default value if KASAN is disabled (which it should be usually)
 
     // this can also be PAGE_SHIFT if (MIN_THREAD_SHIFT < PAGE_SHIFT) however here 14 > 12
@@ -265,5 +268,46 @@ static inline struct inet_sock *inet_sk(const struct sock *sk)
 #define IPPROTO_NONE     59  // IPv6 no next header
 #define IPPROTO_DSTOPTS  60  // IPv6 destination options
 #define IPPROTO_MH       135 // IPv6 mobility header
+
+//
+// include/linux/fs.h
+//
+
+/* file is open for reading */
+#define FMODE_READ ((fmode_t) (1 << 0))
+/* file is open for writing */
+#define FMODE_WRITE ((fmode_t) (1 << 1))
+/* file is seekable */
+#define FMODE_LSEEK ((fmode_t) (1 << 2))
+/* file can be accessed using pread */
+#define FMODE_PREAD ((fmode_t) (1 << 3))
+/* file can be accessed using pwrite */
+#define FMODE_PWRITE ((fmode_t) (1 << 4))
+/* File is opened for execution with sys_execve / sys_uselib */
+#define FMODE_EXEC ((fmode_t) (1 << 5))
+/* File writes are restricted (block device specific) */
+#define FMODE_WRITE_RESTRICTED ((fmode_t) (1 << 6))
+/* File supports atomic writes */
+#define FMODE_CAN_ATOMIC_WRITE ((fmode_t) (1 << 7))
+
+#define PR_SET_SECUREBITS     28
+#define PR_SET_MM             35
+#define PR_SET_MM_START_CODE  1
+#define PR_SET_MM_END_CODE    2
+#define PR_SET_MM_START_DATA  3
+#define PR_SET_MM_END_DATA    4
+#define PR_SET_MM_START_STACK 5
+#define PR_SET_MM_START_BRK   6
+#define PR_SET_MM_BRK         7
+#define PR_SET_MM_ARG_START   8
+#define PR_SET_MM_ARG_END     9
+#define PR_SET_MM_ENV_START   10
+#define PR_SET_MM_ENV_END     11
+#define PR_SET_MM_AUXV        12
+#define PR_SET_MM_EXE_FILE    13
+#define PR_SET_MM_MAP         14
+#define PR_SET_MM_MAP_SIZE    15
+#define PR_SET_VMA            0x53564d41
+#define PR_SET_VMA_ANON_NAME  0
 
 #endif

@@ -23,11 +23,14 @@ statfunc struct path get_path_from_file(struct file *);
 statfunc struct file *get_struct_file_from_fd(u64);
 statfunc unsigned short get_inode_mode_from_fd(u64);
 statfunc int check_fd_type(u64, u16);
+statfunc int is_file_type(struct file *, u16);
+statfunc int is_socket_file(struct file *);
 statfunc unsigned long get_inode_nr_from_dentry(struct dentry *);
 statfunc dev_t get_dev_from_dentry(struct dentry *);
 statfunc u64 get_ctime_nanosec_from_dentry(struct dentry *);
 statfunc size_t get_path_str_buf(struct path *, buf_t *);
 statfunc void *get_path_str(struct path *);
+statfunc void *get_task_pwd_path(struct task_struct *);
 statfunc file_id_t get_file_id(struct file *);
 statfunc void *get_path_str_cached(struct file *);
 statfunc void *get_dentry_path_str(struct dentry *);
@@ -158,6 +161,21 @@ statfunc int check_fd_type(u64 fd, u16 type)
     return 0;
 }
 
+statfunc int is_file_type(struct file *file, u16 type)
+{
+    unsigned short i_mode = get_inode_mode_from_file(file);
+
+    if ((i_mode & S_IFMT) == type)
+        return 1;
+
+    return 0;
+}
+
+statfunc int is_socket_file(struct file *file)
+{
+    return is_file_type(file, S_IFSOCK);
+}
+
 statfunc unsigned long get_inode_nr_from_dentry(struct dentry *dentry)
 {
     return BPF_CORE_READ(dentry, d_inode, i_ino);
@@ -271,6 +289,15 @@ statfunc void *get_path_str(struct path *path)
     return &string_p->buf[buf_off & ((MAX_PERCPU_BUFSIZE >> 1) - 1)];
 }
 
+statfunc void *get_task_pwd_path(struct task_struct *task)
+{
+    struct fs_struct *fs = BPF_CORE_READ(task, fs);
+    if (!fs)
+        return NULL;
+
+    return get_path_str(__builtin_preserve_access_index(&fs->pwd));
+}
+
 statfunc file_id_t get_file_id(struct file *file)
 {
     file_id_t file_id = {};
@@ -318,7 +345,6 @@ statfunc void *get_dentry_path_str_buf(struct dentry *dentry, buf_t *out_buf)
 
     u32 buf_off = (MAX_PERCPU_BUFSIZE >> 1);
 
-#pragma unroll
     for (int i = 0; i < MAX_PATH_COMPONENTS; i++) {
         struct dentry *d_parent = get_d_parent_ptr_from_dentry(dentry);
         if (dentry == d_parent) {
@@ -360,7 +386,7 @@ statfunc void *get_dentry_path_str_buf(struct dentry *dentry, buf_t *out_buf)
         bpf_probe_read_kernel(&(out_buf->buf[(MAX_PERCPU_BUFSIZE >> 1) - 1]), 1, &zero);
     }
 
-    return &out_buf->buf[buf_off];
+    return &out_buf->buf[buf_off & ((MAX_PERCPU_BUFSIZE >> 1) - 1)];
 }
 
 statfunc void *get_dentry_path_str(struct dentry *dentry)
@@ -406,7 +432,6 @@ statfunc int get_standard_fds_from_struct_file(struct file *file)
     }
 
     int fds = 0;
-#pragma unroll
     for (int i = STDIN; i <= STDERR; i++) {
         struct file *fd_file = NULL;
         bpf_core_read(&fd_file, sizeof(struct file *), &fd[i]);

@@ -55,8 +55,7 @@ struct sock___old {
 
 // support bpf_core_type_exists((task struct)->pids) for kernels < 5.0
 
-enum pid_type
-{
+enum pid_type {
     PIDTYPE_PID,
     PIDTYPE_PGID,
     PIDTYPE_SID,
@@ -103,6 +102,38 @@ struct inode___older_v66 {
 // kernel >= v6.11 inode i_ctime field change
 struct inode___older_v611 {
     struct timespec64 __i_ctime;
+};
+
+// struct fred_info //
+
+// CONFIG_X86_FRED
+struct fred_info___check {
+    unsigned long edata;
+};
+
+// Red Hat mm_struct variation
+struct mm_struct_rh {
+    unsigned long saved_auxv[AT_VECTOR_SIZE];
+};
+
+struct mm_struct___redhat {
+    struct {
+        unsigned long start_code;
+        unsigned long end_code;
+        unsigned long start_data;
+        unsigned long end_data;
+        unsigned long start_brk;
+        unsigned long brk;
+        unsigned long start_stack;
+        unsigned long arg_start;
+        unsigned long arg_end;
+        unsigned long env_start;
+        unsigned long env_end;
+        struct file *exe_file;
+    };
+    union {
+        struct mm_struct_rh *mm_rh;
+    };
 };
 
 ///////////////////

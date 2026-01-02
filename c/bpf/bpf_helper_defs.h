@@ -217,11 +217,15 @@ static __bpf_fastcall __u32 (* const bpf_get_smp_processor_id)(void) = (void *) 
  * bpf_skb_store_bytes
  *
  * 	Store *len* bytes from address *from* into the packet
- * 	associated to *skb*, at *offset*. *flags* are a combination of
- * 	**BPF_F_RECOMPUTE_CSUM** (automatically recompute the
- * 	checksum for the packet after storing the bytes) and
- * 	**BPF_F_INVALIDATE_HASH** (set *skb*\ **->hash**, *skb*\
- * 	**->swhash** and *skb*\ **->l4hash** to 0).
+ * 	associated to *skb*, at *offset*. The *flags* are a combination
+ * 	of the following values:
+ *
+ * 	**BPF_F_RECOMPUTE_CSUM**
+ * 		Automatically update *skb*\ **->csum** after storing the
+ * 		bytes.
+ * 	**BPF_F_INVALIDATE_HASH**
+ * 		Set *skb*\ **->hash**, *skb*\ **->swhash** and *skb*\
+ * 		**->l4hash** to 0.
  *
  * 	A call to this helper is susceptible to change the underlying
  * 	packet buffer. Therefore, at load time, all checks on pointers
@@ -281,7 +285,8 @@ static long (* const bpf_l3_csum_replace)(struct __sk_buff *skb, __u32 offset, _
  * 	untouched (unless **BPF_F_MARK_ENFORCE** is added as well), and
  * 	for updates resulting in a null checksum the value is set to
  * 	**CSUM_MANGLED_0** instead. Flag **BPF_F_PSEUDO_HDR** indicates
- * 	the checksum is to be computed against a pseudo-header.
+ * 	that the modified header field is part of the pseudo-header.
+ * 	Flag **BPF_F_IPV6** should be set for IPv6 packets.
  *
  * 	This helper works in combination with **bpf_csum_diff**\ (),
  * 	which does not update the checksum in-place, but offers more
@@ -684,7 +689,7 @@ static __u32 (* const bpf_get_route_realm)(struct __sk_buff *skb) = (void *) 24;
  * 	into it. An example is available in file
  * 	*samples/bpf/trace_output_user.c* in the Linux kernel source
  * 	tree (the eBPF program counterpart is in
- * 	*samples/bpf/trace_output_kern.c*).
+ * 	*samples/bpf/trace_output.bpf.c*).
  *
  * 	**bpf_perf_event_output**\ () achieves better performance
  * 	than **bpf_trace_printk**\ () for sharing data with user
@@ -3553,7 +3558,7 @@ static int (* const bpf_inode_storage_delete)(void *map, void *inode) = (void *)
  * 	including the trailing NUL character. On error, a negative
  * 	value.
  */
-static long (* const bpf_d_path)(struct path *path, char *buf, __u32 sz) = (void *) 147;
+static long (* const bpf_d_path)(const struct path *path, char *buf, __u32 sz) = (void *) 147;
 
 /*
  * bpf_copy_from_user
@@ -3701,6 +3706,9 @@ static void *(* const bpf_this_cpu_ptr)(const void *percpu_ptr) = (void *) 154;
  * 	that the redirection happens to the *ifindex*' peer device and
  * 	the netns switch takes place from ingress to ingress without
  * 	going through the CPU's backlog queue.
+ *
+ * 	*skb*\ **->mark** and *skb*\ **->tstamp** are not cleared during
+ * 	the netns switch.
  *
  * 	The *flags* argument is reserved and must be 0. The helper is
  * 	currently only supported for tc BPF program types at the
@@ -4476,7 +4484,7 @@ static struct mptcp_sock *(* const bpf_skc_to_mptcp_sock)(void *sk) = (void *) 1
  * 	0 on success, -E2BIG if the size exceeds DYNPTR_MAX_SIZE,
  * 	-EINVAL if flags is not 0.
  */
-static long (* const bpf_dynptr_from_mem)(void *data, __u32 size, __u64 flags, struct bpf_dynptr *ptr) = (void *) 197;
+static long (* const bpf_dynptr_from_mem)(void *data, __u64 size, __u64 flags, struct bpf_dynptr *ptr) = (void *) 197;
 
 /*
  * bpf_ringbuf_reserve_dynptr
@@ -4534,7 +4542,7 @@ static void (* const bpf_ringbuf_discard_dynptr)(struct bpf_dynptr *ptr, __u64 f
  * 	of *src*'s data, -EINVAL if *src* is an invalid dynptr or if
  * 	*flags* is not 0.
  */
-static long (* const bpf_dynptr_read)(void *dst, __u32 len, const struct bpf_dynptr *src, __u32 offset, __u64 flags) = (void *) 201;
+static long (* const bpf_dynptr_read)(void *dst, __u64 len, const struct bpf_dynptr *src, __u64 offset, __u64 flags) = (void *) 201;
 
 /*
  * bpf_dynptr_write
@@ -4559,7 +4567,7 @@ static long (* const bpf_dynptr_read)(void *dst, __u32 len, const struct bpf_dyn
  * 	is a read-only dynptr or if *flags* is not correct. For skb-type dynptrs,
  * 	other errors correspond to errors returned by **bpf_skb_store_bytes**\ ().
  */
-static long (* const bpf_dynptr_write)(const struct bpf_dynptr *dst, __u32 offset, void *src, __u32 len, __u64 flags) = (void *) 202;
+static long (* const bpf_dynptr_write)(const struct bpf_dynptr *dst, __u64 offset, void *src, __u64 len, __u64 flags) = (void *) 202;
 
 /*
  * bpf_dynptr_data
@@ -4577,7 +4585,7 @@ static long (* const bpf_dynptr_write)(const struct bpf_dynptr *dst, __u32 offse
  * 	read-only, if the dynptr is invalid, or if the offset and length
  * 	is out of bounds.
  */
-static void *(* const bpf_dynptr_data)(const struct bpf_dynptr *ptr, __u32 offset, __u32 len) = (void *) 203;
+static void *(* const bpf_dynptr_data)(const struct bpf_dynptr *ptr, __u64 offset, __u64 len) = (void *) 203;
 
 /*
  * bpf_tcp_raw_gen_syncookie_ipv4

@@ -1,11 +1,56 @@
 package events
 
 import (
-	"github.com/Velocidex/tracee_velociraptor/userspace/probes"
+	"slices"
+
 	"kernel.org/pub/linux/libs/security/libcap/cap"
+
+	"github.com/Velocidex/tracee_velociraptor/userspace/ebpf/probes"
 )
 
-// Dependencies is a struct that holds all the dependencies of a given event definition.
+// DependencyStrategy implements the Strategy pattern for event dependency resolution.
+// It encapsulates multiple approaches to satisfying event requirements: a primary
+// dependency configuration followed by an ordered sequence of fallback alternatives.
+// Fallbacks are attempted sequentially in the order they appear until one succeeds
+// or all options are exhausted, providing graceful degradation of functionality.
+//
+// Currently, fallbacks are not supporting tail calls and capabilities in the dependencies.
+// Event dependencies with these dependencies and kernel symbol dependencies are not supported in fallbacks as well.
+type DependencyStrategy struct {
+	primary   Dependencies
+	fallbacks []Dependencies
+}
+
+func NewDependencyStrategy(dependencies Dependencies) DependencyStrategy {
+	return DependencyStrategy{primary: dependencies, fallbacks: nil}
+}
+
+func NewDependencyStrategyWithFallbacks(dependencies Dependencies, fallbacks []Dependencies) DependencyStrategy {
+	return DependencyStrategy{primary: dependencies, fallbacks: fallbacks}
+}
+
+func (e DependencyStrategy) GetPrimaryDependencies() Dependencies {
+	return e.primary
+}
+
+func (e DependencyStrategy) GetFallbackDependencies() []Dependencies {
+	return e.fallbacks
+}
+
+func (e DependencyStrategy) GetFallbackAt(index int) (Dependencies, bool) {
+	if index < 0 || index >= len(e.fallbacks) {
+		return Dependencies{}, false
+	}
+	return e.fallbacks[index], true
+}
+
+func (e DependencyStrategy) GetFallbacks() []Dependencies {
+	return e.fallbacks
+}
+
+// Dependencies represents a cohesive set of runtime requirements for event execution.
+// It encapsulates all necessary system resources, kernel interfaces, and security
+// constraints required for successful event operation.
 type Dependencies struct {
 	ids          []ID
 	kSymbols     []KSymbol
@@ -73,7 +118,6 @@ func (d Dependencies) GetCapabilities() Capabilities {
 }
 
 // Probe
-
 type Probe struct {
 	handle   probes.Handle
 	required bool // tracee fails if probe can't be attached
@@ -151,7 +195,9 @@ const (
 	TailHiddenKernelModuleKset
 	TailHiddenKernelModuleModTree
 	TailHiddenKernelModuleNewModOnly
-	MaxTail
+	TailHiddenKernelModuleModTreeLoop
+	TailFeaturesFallback // Use the same index to make sure that the tailcall is reset
+	maxTail
 )
 
 type TailCall struct {
@@ -173,4 +219,40 @@ func (tc TailCall) GetMapName() string {
 
 func (tc TailCall) GetProgName() string {
 	return tc.progName
+}
+
+func (tc TailCall) IsRequired() bool {
+	return true // tailcalls are always required
+}
+
+func NewTailCall(mapName string, progName string, indexes []uint32) TailCall {
+	return TailCall{mapName: mapName, progName: progName, indexes: indexes}
+}
+
+// NewTailCallWithMergedIndexes creates a new TailCall with merged indexes from an existing tailcall and new indexes.
+// This is used when multiple events share the same map+program combination but with different indexes.
+func NewTailCallWithMergedIndexes(base TailCall, additionalIndexes []uint32) TailCall {
+	// Create a map to track unique indexes
+	indexSet := make(map[uint32]struct{})
+	for _, idx := range base.indexes {
+		indexSet[idx] = struct{}{}
+	}
+	for _, idx := range additionalIndexes {
+		indexSet[idx] = struct{}{}
+	}
+
+	// Convert back to slice
+	mergedIndexes := make([]uint32, 0, len(indexSet))
+	for idx := range indexSet {
+		mergedIndexes = append(mergedIndexes, idx)
+	}
+
+	// Sort indexes so order is deterministic
+	slices.Sort(mergedIndexes)
+
+	return TailCall{
+		mapName:  base.mapName,
+		progName: base.progName,
+		indexes:  mergedIndexes,
+	}
 }

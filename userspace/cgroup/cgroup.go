@@ -57,7 +57,7 @@ type Cgroups struct {
 	hid      int     // default cgroup controller hierarchy ID
 }
 
-func NewCgroups() (*Cgroups, error) {
+func NewCgroups(cgroupFsPath string, cgroupFsForce bool) (*Cgroups, error) {
 	var err error
 	var cgrp *Cgroup
 	var cgroupv1, cgroupv2 Cgroup
@@ -70,7 +70,11 @@ func NewCgroups() (*Cgroups, error) {
 
 	// only start cgroupv1 if it is the OS default (or else it isn't needed)
 	if defaultVersion == CgroupVersion1 {
-		cgroupv1, err = NewCgroup(CgroupVersion1)
+		cgroupv1, err = NewCgroup(Config{
+			Version:         CgroupVersion1,
+			CgroupfsPath:    cgroupFsPath,
+			ForceMountpoint: cgroupFsForce,
+		})
 		if err != nil {
 			if _, ok := err.(*VersionNotSupported); !ok {
 				return nil, errfmt.WrapError(err)
@@ -79,7 +83,11 @@ func NewCgroups() (*Cgroups, error) {
 	}
 
 	// start cgroupv2 (if supported)
-	cgroupv2, err = NewCgroup(CgroupVersion2)
+	cgroupv2, err = NewCgroup(Config{
+		Version:         CgroupVersion2,
+		CgroupfsPath:    cgroupFsPath,
+		ForceMountpoint: cgroupFsForce,
+	})
 	if err != nil {
 		if _, ok := err.(*VersionNotSupported); !ok {
 			return nil, errfmt.WrapError(err)
@@ -162,24 +170,38 @@ func (cs *Cgroups) GetCgroup(ver CgroupVersion) Cgroup {
 //
 
 type Cgroup interface {
-	init() error
+	init(cgroupfsPath string, forceMount bool) error
 	destroy() error
 	GetMountPoint() string
 	getDefaultHierarchyID() int
 	GetVersion() CgroupVersion
 }
 
-func NewCgroup(ver CgroupVersion) (Cgroup, error) {
+type Config struct {
+	Version         CgroupVersion
+	CgroupfsPath    string
+	ForceMountpoint bool
+}
+
+func NewCgroup(cfg Config) (Cgroup, error) {
 	var c Cgroup
 
-	switch ver {
+	switch cfg.Version {
 	case CgroupVersion1:
 		c = &CgroupV1{}
 	case CgroupVersion2:
 		c = &CgroupV2{}
 	}
 
-	return c, c.init()
+	fsPath := cfg.CgroupfsPath
+	forceMount := cfg.ForceMountpoint
+	if fsPath == "" {
+		// if no path is provided, use the default path and auto-detection.
+		fsPath = sysFsCgroup
+		forceMount = false
+	}
+
+	return c, c.init(fsPath, forceMount)
 }
 
 // cgroupv1
@@ -190,7 +212,7 @@ type CgroupV1 struct {
 	hid        int
 }
 
-func (c *CgroupV1) init() error {
+func (c *CgroupV1) init(cgroupfsPath string, forceMount bool) error {
 	// 0. check if cgroup type is supported
 	supported, err := mount.IsFileSystemSupported(CgroupVersion1.String())
 	if err != nil {
@@ -202,10 +224,13 @@ func (c *CgroupV1) init() error {
 
 	// 1. mount cgroup (if needed)
 	c.mounted, err = mount.NewMountHostOnce(
-		CgroupV1FsType,
-		CgroupV1FsType,
-		CgroupDefaultController,
-		sysFsCgroup, // where to check for already mounted cgroupfs
+		mount.Config{
+			Source: CgroupV1FsType,
+			FsType: CgroupV1FsType,
+			Data:   CgroupDefaultController,
+			Where:  cgroupfsPath,
+			Force:  forceMount,
+		},
 	)
 	if err != nil {
 		return errfmt.WrapError(err)
@@ -246,7 +271,7 @@ type CgroupV2 struct {
 	hid        int
 }
 
-func (c *CgroupV2) init() error {
+func (c *CgroupV2) init(cgroupfsPath string, forceMount bool) error {
 	// 0. check if cgroup type is supported
 	supported, err := mount.IsFileSystemSupported(CgroupVersion2.String())
 	if err != nil {
@@ -258,10 +283,13 @@ func (c *CgroupV2) init() error {
 
 	// 1. mount cgroup (if needed)
 	c.mounted, err = mount.NewMountHostOnce(
-		CgroupV2FsType,
-		CgroupV2FsType,
-		"",          // cgroupv2 has no default controller
-		sysFsCgroup, // where to check for already mounted cgroupfs
+		mount.Config{
+			Source: CgroupV2FsType,
+			FsType: CgroupV2FsType,
+			Data:   "",           // cgroupv2 has no default controller
+			Where:  cgroupfsPath, // where to check for already mounted cgroupfs
+			Force:  forceMount,
+		},
 	)
 	if err != nil {
 		return errfmt.WrapError(err)
@@ -455,4 +483,66 @@ func GetCgroupPath(rootDir string, cgroupId uint64, subPath string) (string, tim
 	}
 
 	return "", time.Time{}, fs.ErrNotExist
+}
+
+// GetCgroupID returns the cgroup ID (inode number) for a given process and cgroup version.
+// The cgroup ID is extracted from /proc/<pid>/cgroup and the corresponding filesystem path.
+func GetCgroupID(pid int32, cgroupVersion CgroupVersion) (uint64, error) {
+	if pid <= 0 {
+		return 0, errfmt.Errorf("invalid pid %d: must be positive", pid)
+	}
+
+	cgroupFile := "/proc/" + strconv.Itoa(int(pid)) + "/cgroup"
+	cgroupData, err := os.ReadFile(cgroupFile)
+	if err != nil {
+		return 0, errfmt.Errorf("failed to read cgroup file %s: %v", cgroupFile, err)
+	}
+
+	// Find the cgroupv2 path (prefixed with "0::") or the cgroupv1 path (cpuset subsystem)
+	cgroupPath := ""
+	lines := strings.Split(string(cgroupData), "\n")
+	for _, line := range lines {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		if cgroupVersion == CgroupVersion2 && (parts[1] == "" || parts[0] == "0") {
+			cgroupPath = parts[2]
+			break
+		}
+
+		if cgroupVersion == CgroupVersion1 && parts[1] == "cpuset" {
+			cgroupPath = parts[2]
+		}
+	}
+
+	if cgroupPath == "" {
+		return 0, errfmt.Errorf("could not find cgroup path for pid %d", pid)
+	}
+
+	var fullCgroupPath string
+	switch cgroupVersion {
+	case CgroupVersion1:
+		fullCgroupPath = filepath.Join("/sys/fs/cgroup/cpuset", cgroupPath)
+	case CgroupVersion2:
+		// Use existing mount detection functionality
+		cgroupV2Mountpoint, _, err := mount.SearchMountpointFromHost("cgroup2", "")
+		if err != nil {
+			return 0, errfmt.Errorf("failed to find cgroup v2 mount point: %v", err)
+		}
+		if cgroupV2Mountpoint == "" {
+			return 0, errfmt.Errorf("could not find cgroup v2 mount point")
+		}
+		fullCgroupPath = filepath.Join(cgroupV2Mountpoint, cgroupPath)
+	default:
+		return 0, errfmt.Errorf("invalid cgroup version %d (%s)", cgroupVersion, cgroupVersion.String())
+	}
+
+	// Get file info to retrieve the inode number (which is the cgroup ID)
+	var stat syscall.Stat_t
+	if err := syscall.Stat(fullCgroupPath, &stat); err != nil {
+		return 0, errfmt.Errorf("failed to stat cgroup path %s: %v relative cgroup path: %s", fullCgroupPath, err, cgroupPath)
+	}
+
+	return stat.Ino, nil
 }

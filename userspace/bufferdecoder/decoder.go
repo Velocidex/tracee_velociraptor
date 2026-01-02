@@ -8,30 +8,98 @@ package bufferdecoder
 
 import (
 	"encoding/binary"
-	"errors"
+	"fmt"
 
-	errfmt "fmt"
-
+	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
+	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
+	timeutil "github.com/Velocidex/tracee_velociraptor/userspace/time"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
+	"github.com/Velocidex/tracee_velociraptor/userspace/events/data"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
 )
 
 type EbpfDecoder struct {
-	buffer []byte
-	cursor int
+	buffer      []byte
+	cursor      int
+	typeDecoder TypeDecoder
 }
 
-var ErrBufferTooShort = errors.New("can't read context from buffer: buffer too short")
+type ErrBufferTooShort struct {
+	expected int
+	got      int
+	typeName string
+}
+
+func (e ErrBufferTooShort) Error() string {
+	return fmt.Sprintf("can't read context from buffer (type %s): buffer too short. expected %d, got %d", e.typeName, e.expected, e.got)
+}
+
+func (decoder *EbpfDecoder) makeBufferTooShortError(typeName string, expected int) error {
+	return ErrBufferTooShort{
+		expected: expected,
+		got:      len(decoder.buffer[decoder.cursor:]),
+		typeName: typeName,
+	}
+}
 
 // New creates and initializes a new EbpfDecoder using rawBuffer as its initial content.
 // The EbpfDecoder takes ownership of rawBuffer, and the caller should not use rawBuffer after this call.
 // New is intended to prepare a buffer to read existing data from it, translating it to protocol defined structs.
-// The protocol is specific between the Trace eBPF program and the Tracee-eBPF user space application.
-func New(rawBuffer []byte) *EbpfDecoder {
+// The protocol is specific between the Trace eBPF program and the Tracee user space application.
+func New(rawBuffer []byte, typeDecoder TypeDecoder) *EbpfDecoder {
 	return &EbpfDecoder{
-		buffer: rawBuffer,
-		cursor: 0,
+		buffer:      rawBuffer,
+		cursor:      0,
+		typeDecoder: typeDecoder,
 	}
+}
+
+type presentorFunc func(any) (any, error)
+type TypeDecoder []map[string]presentorFunc
+
+func NewTypeDecoder() TypeDecoder {
+	typeDecoder := TypeDecoder{
+		data.INT_T:  {},
+		data.UINT_T: {},
+		data.LONG_T: {},
+		data.ULONG_T: {
+			"time.Time": func(a any) (any, error) {
+				argVal, ok := a.(uint64)
+				if !ok {
+					return nil, errfmt.Errorf("error presenting uint64 as time.Time, type received was %T", a)
+				}
+				return timeutil.NsSinceEpochToTime(timeutil.BootToEpochNS(argVal)), nil
+			},
+		},
+		data.U16_T:       {},
+		data.U8_T:        {},
+		data.INT_ARR_2_T: {},
+		data.UINT64_ARR_T: {
+			"[]trace.HookedSymbolData": func(a any) (any, error) {
+				// TODO: this is a temporary solution to present the uint64 array as []trace.HookedSymbolData
+				// we need a redesign such that decoders can have access to the kernel symbols table.
+				return a, nil
+			},
+		},
+		data.POINTER_T:   {},
+		data.BYTES_T:     {},
+		data.STR_T:       {},
+		data.STR_ARR_T:   {},
+		data.SOCK_ADDR_T: {},
+		data.CRED_T:      {},
+		data.TIMESPEC_T: {
+			// timespec is seconds+nano in float
+			"float64": func(a any) (any, error) {
+				return a, nil
+			},
+		},
+		data.ARGS_ARR_T: {},
+		data.BOOL_T:     {},
+		data.FLOAT_T:    {},
+		data.FLOAT64_T:  {},
+	}
+
+	return typeDecoder
 }
 
 // BuffLen returns the total length of the buffer owned by decoder.
@@ -39,8 +107,21 @@ func (decoder *EbpfDecoder) BuffLen() int {
 	return len(decoder.buffer)
 }
 
-// ReadAmountBytes returns the total amount of bytes that decoder has read from its buffer up until now.
-func (decoder *EbpfDecoder) ReadAmountBytes() int {
+// BytesRead returns the total amount of bytes that decoder has read from its buffer up until now.
+func (decoder *EbpfDecoder) BytesRead() int {
+	return decoder.cursor
+}
+
+// MoveCursor moves the buffer cursor over n bytes.
+// This is useful to skip unwanted data.
+// It returns the new cursor position. If the cursor overflows
+// (length of buffer is not overflow but end of buffer),
+// it will not move and will return the same value.
+func (decoder *EbpfDecoder) MoveCursor(n int) int {
+	if decoder.cursor+n > len(decoder.buffer) {
+		return decoder.cursor
+	}
+	decoder.cursor += n
 	return decoder.cursor
 }
 
@@ -89,29 +170,29 @@ func (decoder *EbpfDecoder) DecodeContext(eCtx *EventContext) error {
 // DecodeArguments decodes the remaining buffer's argument values, according to the given event definition.
 // It should be called last, and after decoding the argnum with DecodeUint8.
 //
-// Argument array passed should be initialized with the size of len(evtParams).
-func (decoder *EbpfDecoder) DecodeArguments(args []trace.Argument, argnum int, evtParams []trace.ArgMeta, evtName string, eventId events.ID) error {
+// Argument array passed should be initialized with the size of len(evtFields).
+func (decoder *EbpfDecoder) DecodeArguments(args []trace.Argument, argnum int, evtFields []events.DataField, evtName string, eventId events.ID) error {
 	for i := 0; i < argnum; i++ {
 		idx, arg, err := readArgFromBuff(
 			eventId,
 			decoder,
-			evtParams,
+			evtFields,
 		)
 		if err != nil {
-			//logger.Errorw("error reading argument from buffer", "error", errfmt.Errorf("failed to read argument %d of event %s: %v", i, evtName, err))
+			logger.Errorw("error reading argument from buffer", "error", errfmt.Errorf("failed to read argument %d of event %s: %v", i, evtName, err))
 			continue
 		}
 		if args[idx].Value != nil {
-			//logger.Warnw("argument overridden from buffer", "error", errfmt.Errorf("read more than one instance of argument %s of event %s. Saved value: %v. New value: %v", arg.Name, evtName, args[idx].Value, arg.Value))
+			logger.Warnw("argument overridden from buffer", "error", errfmt.Errorf("read more than one instance of argument %s of event %s. Saved value: %v. New value: %v", arg.Name, evtName, args[idx].Value, arg.Value))
 		}
 		args[idx] = arg
 	}
 
-	// Fill missing arguments metadata
-	for i := 0; i < len(evtParams); i++ {
+	// Fill missing arguments
+	for i := 0; i < len(evtFields); i++ {
 		if args[i].Value == nil {
-			args[i].ArgMeta = evtParams[i]
-			args[i].Value = args[i].Zero
+			args[i].ArgMeta = evtFields[i].ArgMeta
+			args[i].Value = evtFields[i].Zero
 		}
 	}
 	return nil
@@ -122,7 +203,7 @@ func (decoder *EbpfDecoder) DecodeUint8(msg *uint8) error {
 	readAmount := 1
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < readAmount {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("uint8", readAmount)
 	}
 	*msg = decoder.buffer[decoder.cursor]
 	decoder.cursor += readAmount
@@ -134,7 +215,7 @@ func (decoder *EbpfDecoder) DecodeInt8(msg *int8) error {
 	readAmount := 1
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < readAmount {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("int8", readAmount)
 	}
 	*msg = int8(decoder.buffer[offset])
 	decoder.cursor += readAmount
@@ -146,7 +227,7 @@ func (decoder *EbpfDecoder) DecodeUint16(msg *uint16) error {
 	readAmount := 2
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < readAmount {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("uint16", readAmount)
 	}
 	*msg = binary.LittleEndian.Uint16(decoder.buffer[offset : offset+readAmount])
 	decoder.cursor += readAmount
@@ -158,7 +239,7 @@ func (decoder *EbpfDecoder) DecodeUint16BigEndian(msg *uint16) error {
 	readAmount := 2
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < readAmount {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("uint16", readAmount)
 	}
 	*msg = binary.BigEndian.Uint16(decoder.buffer[offset : offset+readAmount])
 	decoder.cursor += readAmount
@@ -170,7 +251,7 @@ func (decoder *EbpfDecoder) DecodeInt16(msg *int16) error {
 	readAmount := 2
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < readAmount {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("int16", readAmount)
 	}
 	*msg = int16(binary.LittleEndian.Uint16(decoder.buffer[offset : offset+readAmount]))
 	decoder.cursor += readAmount
@@ -182,7 +263,7 @@ func (decoder *EbpfDecoder) DecodeUint32(msg *uint32) error {
 	readAmount := 4
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < readAmount {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("uint32", readAmount)
 	}
 	*msg = binary.LittleEndian.Uint32(decoder.buffer[offset : offset+readAmount])
 	decoder.cursor += readAmount
@@ -194,7 +275,7 @@ func (decoder *EbpfDecoder) DecodeUint32BigEndian(msg *uint32) error {
 	readAmount := 4
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < readAmount {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("uint32 (big endian)", readAmount)
 	}
 	*msg = binary.BigEndian.Uint32(decoder.buffer[offset : offset+readAmount])
 	decoder.cursor += readAmount
@@ -206,7 +287,7 @@ func (decoder *EbpfDecoder) DecodeInt32(msg *int32) error {
 	readAmount := 4
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < readAmount {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("int32", readAmount)
 	}
 	*msg = int32(binary.LittleEndian.Uint32(decoder.buffer[offset : offset+readAmount]))
 	decoder.cursor += readAmount
@@ -218,7 +299,7 @@ func (decoder *EbpfDecoder) DecodeUint64(msg *uint64) error {
 	readAmount := 8
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < readAmount {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("uint64", readAmount)
 	}
 	*msg = binary.LittleEndian.Uint64(decoder.buffer[offset : offset+readAmount])
 	decoder.cursor += readAmount
@@ -230,7 +311,7 @@ func (decoder *EbpfDecoder) DecodeInt64(msg *int64) error {
 	readAmount := 8
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < readAmount {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("int64", readAmount)
 	}
 	*msg = int64(binary.LittleEndian.Uint64(decoder.buffer[decoder.cursor : decoder.cursor+readAmount]))
 	decoder.cursor += readAmount
@@ -241,7 +322,7 @@ func (decoder *EbpfDecoder) DecodeInt64(msg *int64) error {
 func (decoder *EbpfDecoder) DecodeBool(msg *bool) error {
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < 1 {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("bool", 1)
 	}
 	*msg = (decoder.buffer[offset] != 0)
 	decoder.cursor++
@@ -253,18 +334,30 @@ func (decoder *EbpfDecoder) DecodeBytes(msg []byte, size int) error {
 	offset := decoder.cursor
 	bufferLen := len(decoder.buffer[offset:])
 	if bufferLen < size {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("bytes", size)
 	}
 	_ = copy(msg[:], decoder.buffer[offset:offset+size])
 	decoder.cursor += size
 	return nil
 }
 
-// DecodeIntArray translate from the decoder buffer, starting from the decoder cursor, to msg, size * 4 bytes (in order to get int32).
-func (decoder *EbpfDecoder) DecodeIntArray(msg []int32, size int) error {
+// ReadBytesLen is a helper which allocates a known size bytes buffer and decodes
+// the bytes from the buffer into it.
+func (decoder *EbpfDecoder) ReadBytesLen(len int) ([]byte, error) {
+	var err error
+	res := make([]byte, len)
+	err = decoder.DecodeBytes(res[:], len)
+	if err != nil {
+		return nil, errfmt.Errorf("error reading byte array: %v", err)
+	}
+	return res, nil
+}
+
+// DecodeInt32Array translate from the decoder buffer, starting from the decoder cursor, to msg, size * 4 bytes (in order to get int32).
+func (decoder *EbpfDecoder) DecodeInt32Array(msg []int32, size int) error {
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < size*4 {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("[]int32", size*4)
 	}
 	for i := 0; i < size; i++ {
 		msg[i] = int32(binary.LittleEndian.Uint32(decoder.buffer[decoder.cursor : decoder.cursor+4]))
@@ -295,7 +388,7 @@ func (decoder *EbpfDecoder) DecodeUint64Array(msg *[]uint64) error {
 func (decoder *EbpfDecoder) DecodeSlimCred(slimCred *SlimCred) error {
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < 80 {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("slimCred", 80)
 	}
 	slimCred.Uid = binary.LittleEndian.Uint32(decoder.buffer[offset : offset+4])
 	slimCred.Gid = binary.LittleEndian.Uint32(decoder.buffer[offset+4 : offset+8])
@@ -320,7 +413,7 @@ func (decoder *EbpfDecoder) DecodeSlimCred(slimCred *SlimCred) error {
 func (decoder *EbpfDecoder) DecodeChunkMeta(chunkMeta *ChunkMeta) error {
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < int(chunkMeta.GetSizeBytes()) {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("chunkMeta", int(chunkMeta.GetSizeBytes()))
 	}
 	chunkMeta.BinType = BinType(decoder.buffer[offset])
 	chunkMeta.CgroupID = binary.LittleEndian.Uint64(decoder.buffer[offset+1 : offset+9])
@@ -335,7 +428,7 @@ func (decoder *EbpfDecoder) DecodeChunkMeta(chunkMeta *ChunkMeta) error {
 func (decoder *EbpfDecoder) DecodeVfsFileMeta(vfsFileMeta *VfsFileMeta) error {
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < int(vfsFileMeta.GetSizeBytes()) {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("vfsFileMeta", int(vfsFileMeta.GetSizeBytes()))
 	}
 	vfsFileMeta.DevID = binary.LittleEndian.Uint32(decoder.buffer[offset : offset+4])
 	vfsFileMeta.Inode = binary.LittleEndian.Uint64(decoder.buffer[offset+4 : offset+12])
@@ -349,7 +442,7 @@ func (decoder *EbpfDecoder) DecodeVfsFileMeta(vfsFileMeta *VfsFileMeta) error {
 func (decoder *EbpfDecoder) DecodeKernelModuleMeta(kernelModuleMeta *KernelModuleMeta) error {
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < int(kernelModuleMeta.GetSizeBytes()) {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("kernelModuleMeta", int(kernelModuleMeta.GetSizeBytes()))
 	}
 	kernelModuleMeta.DevID = binary.LittleEndian.Uint32(decoder.buffer[offset : offset+4])
 	kernelModuleMeta.Inode = binary.LittleEndian.Uint64(decoder.buffer[offset+4 : offset+12])
@@ -363,7 +456,7 @@ func (decoder *EbpfDecoder) DecodeKernelModuleMeta(kernelModuleMeta *KernelModul
 func (decoder *EbpfDecoder) DecodeBpfObjectMeta(bpfObjectMeta *BpfObjectMeta) error {
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < int(bpfObjectMeta.GetSizeBytes()) {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("bpfObjectMeta", int(bpfObjectMeta.GetSizeBytes()))
 	}
 	_ = copy(bpfObjectMeta.Name[:], decoder.buffer[offset:offset+16])
 	bpfObjectMeta.Rand = binary.LittleEndian.Uint32(decoder.buffer[offset+16 : offset+20])
@@ -377,11 +470,18 @@ func (decoder *EbpfDecoder) DecodeBpfObjectMeta(bpfObjectMeta *BpfObjectMeta) er
 func (decoder *EbpfDecoder) DecodeMprotectWriteMeta(mprotectWriteMeta *MprotectWriteMeta) error {
 	offset := decoder.cursor
 	if len(decoder.buffer[offset:]) < int(mprotectWriteMeta.GetSizeBytes()) {
-		return ErrBufferTooShort
+		return decoder.makeBufferTooShortError("mprotectWriteMeta", int(mprotectWriteMeta.GetSizeBytes()))
 	}
 	mprotectWriteMeta.Ts = binary.LittleEndian.Uint64(decoder.buffer[offset : offset+8])
 	mprotectWriteMeta.Pid = binary.LittleEndian.Uint32(decoder.buffer[offset+8 : offset+12])
 
 	decoder.cursor += int(mprotectWriteMeta.GetSizeBytes())
 	return nil
+}
+
+// SetBuffer resets the decoder with a new buffer and resets the cursor to 0.
+// This allows reusing decoder instances from a pool.
+func (decoder *EbpfDecoder) SetBuffer(newBuffer []byte) {
+	decoder.buffer = newBuffer
+	decoder.cursor = 0
 }

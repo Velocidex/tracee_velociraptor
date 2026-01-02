@@ -1,0 +1,90 @@
+ExcludedFiles:
+  - _test.go
+
+Mutations:
+  - From: "libbpf/src/*"
+    To: "c/bpf/"
+    Desc: Copying libbpf
+
+  - From: "tracee/pkg/ebpf/c/**/*.{c,h}"
+    StripPrefix: tracee/pkg/ebpf/c/
+    To: "c/"
+    Desc: Copying tracee BPF code
+
+  - Match: "(values?), *(event_data|policies_config_map|uid_filter|pid_filter|mnt_ns_filter|pid_ns_filter|uts_ns_filter|data_filter_exact|data_filter_suffix|data_filter_prefix|comm_filter|cgroup_id_filter|binary_filter|process_tree_map|event_config|events_map)_t"
+    Replace: "$1, struct $2"
+    Glob: "c/maps.h"
+    Desc: Removing typedefs from Map definitions
+
+  - Match: "value, eq_t"
+    Replace: "value, struct equality"
+    Glob: "c/maps.h"
+
+  - Match: "(?sm)struct features_test_arena.+features_test_arena_t;"
+    Replace: ""
+    Glob: "c/maps.h"
+    Desc: Removing arena feature test
+
+  - Match: "arena_test = .+"
+    Replace: "arena_test = NULL;"
+    Glob: c/tracee.bpf.c
+    Desc: Removing arena feature test
+
+  - From: tracee/pkg/bufferdecoder/*.go
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
+  - From: tracee/pkg/datastores/dns/*.go
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
+  - From: tracee/pkg/ebpf/probes/{arch*.go,cgroup.go,common.go,probes.go,trace.go,uprobe*.go,trace.go}
+    To: userspace/ebpf/probes/
+
+  - From: tracee/types/{protocol,trace,detect}/*.go
+    StripPrefix: tracee/types/
+    To: userspace/types/
+
+  - From: tracee/pkg/events/derive/{derive.go,errors.go,hooked_seq_ops.go,hooked_syscall.go,net_flow.go,net_packet.go,net_packet_helpers.go,net_tcp.go,process_execute_failed.go}
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
+  - From: tracee/pkg/events/{parse,trigger,data}/*.go
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
+  - From: tracee/pkg/events/{core*.go,definition*.go,parse_args*.go,version.go}
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
+  - From: tracee/pkg/datastores/symbol/{kernel.go,table.go}
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
+  - From: tracee/common/{fileutil,interfaces,set,cgroup,counter,mount,errfmt,logger,parsers,capabilities,environment,elf}/*.go
+    StripPrefix: tracee/common/
+    To: userspace/
+
+  - From: patches/**/*
+    StripPrefix: patches/
+    To: userspace/
+
+  - Match: '"github.com/aquasecurity/tracee/common/timeutil"'
+    Replace: timeutil "github.com/Velocidex/tracee_velociraptor/userspace/time"
+    Glob: userspace/**/*.go
+
+  - Match: bpf "github.com/aquasecurity/libbpfgo"
+    Replace: bpf "github.com/Velocidex/tracee_velociraptor/userspace/compat/bpf"
+    Glob: userspace/**/*.go
+
+  - Match: github.com/aquasecurity/tracee/common/
+    Replace: github.com/Velocidex/tracee_velociraptor/userspace/
+    Glob: userspace/**/*.go
+
+  - Match: github.com/aquasecurity/tracee/pkg/
+    Replace: github.com/Velocidex/tracee_velociraptor/userspace/
+    Glob: userspace/**/*.go
+
+  - Match: github.com/aquasecurity/tracee/types/
+    Replace: github.com/Velocidex/tracee_velociraptor/userspace/types/
+    Glob: userspace/**/*.go
