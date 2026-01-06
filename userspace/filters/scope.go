@@ -1,0 +1,268 @@
+package filters
+
+import (
+	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
+	"github.com/Velocidex/tracee_velociraptor/userspace/interfaces"
+	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"
+)
+
+type ScopeFilter struct {
+	enabled                    bool
+	timestampFilter            *NumericFilter[int64]
+	processorIDFilter          *NumericFilter[int64]
+	pidFilter                  *NumericFilter[int64]
+	tidFilter                  *NumericFilter[int64]
+	ppidFilter                 *NumericFilter[int64]
+	hostPidFilter              *NumericFilter[int64]
+	hostTidFilter              *NumericFilter[int64]
+	hostPpidFilter             *NumericFilter[int64]
+	uidFilter                  *NumericFilter[int64]
+	mntNSFilter                *NumericFilter[int64]
+	pidNSFilter                *NumericFilter[int64]
+	processNameFilter          *StringFilter
+	hostNameFilter             *StringFilter
+	cgroupIDFilter             *NumericFilter[uint64]
+	containerFilter            *BoolFilter
+	containerStartedFilter     *BoolFilter
+	containerIDFilter          *StringFilter
+	containerImageFilter       *StringFilter
+	containerImageDigestFilter *StringFilter
+	containerNameFilter        *StringFilter
+	podNameFilter              *StringFilter
+	podNSFilter                *StringFilter
+	podUIDFilter               *StringFilter
+	podSandboxFilter           *BoolFilter
+	syscallFilter              *StringFilter
+}
+
+// Compile-time check to ensure that ScopeFilter implements the Cloner interface
+var _ interfaces.Cloner[*ScopeFilter] = &ScopeFilter{}
+
+func NewScopeFilter() *ScopeFilter {
+	return &ScopeFilter{
+		enabled:                    false,
+		timestampFilter:            NewIntFilter(),
+		processorIDFilter:          NewIntFilter(),
+		pidFilter:                  NewIntFilter(),
+		tidFilter:                  NewIntFilter(),
+		ppidFilter:                 NewIntFilter(),
+		hostPidFilter:              NewIntFilter(),
+		hostTidFilter:              NewIntFilter(),
+		hostPpidFilter:             NewIntFilter(),
+		uidFilter:                  NewIntFilter(),
+		mntNSFilter:                NewIntFilter(),
+		pidNSFilter:                NewIntFilter(),
+		processNameFilter:          NewStringFilter(nil),
+		hostNameFilter:             NewStringFilter(nil),
+		cgroupIDFilter:             NewUIntFilter(),
+		containerFilter:            NewBoolFilter(),
+		containerStartedFilter:     NewBoolFilter(),
+		containerIDFilter:          NewStringFilter(nil),
+		containerImageFilter:       NewStringFilter(nil),
+		containerImageDigestFilter: NewStringFilter(nil),
+		containerNameFilter:        NewStringFilter(nil),
+		podNameFilter:              NewStringFilter(nil),
+		podNSFilter:                NewStringFilter(nil),
+		podUIDFilter:               NewStringFilter(nil),
+		podSandboxFilter:           NewBoolFilter(),
+		syscallFilter:              NewStringFilter(nil),
+	}
+}
+
+func (f *ScopeFilter) Enable() {
+	f.enabled = true
+}
+
+func (f *ScopeFilter) Disable() {
+	f.enabled = false
+}
+
+func (f *ScopeFilter) Enabled() bool {
+	return f.enabled
+}
+
+func (f *ScopeFilter) Filter(evt trace.Event) bool {
+	if !f.enabled {
+		return true
+	}
+
+	// TODO: optimize the order of filter calls
+	// if we order this by most to least likely filter to be set
+	// we can short circuit this logic.
+	return f.containerFilter.Filter(evt.Container.ID != "") &&
+		f.containerStartedFilter.Filter(evt.ContextFlags.ContainerStarted) &&
+		f.processNameFilter.Filter(evt.ProcessName) &&
+		f.timestampFilter.Filter(int64(evt.Timestamp)) &&
+		f.cgroupIDFilter.Filter(uint64(evt.CgroupID)) &&
+		f.containerIDFilter.Filter(evt.Container.ID) &&
+		f.containerImageFilter.Filter(evt.Container.ImageName) &&
+		f.containerNameFilter.Filter(evt.Container.Name) &&
+		f.hostNameFilter.Filter(evt.HostName) &&
+		f.hostPidFilter.Filter(int64(evt.HostProcessID)) &&
+		f.hostPpidFilter.Filter(int64(evt.HostParentProcessID)) &&
+		f.syscallFilter.Filter(evt.Syscall) &&
+		f.hostTidFilter.Filter(int64(evt.HostThreadID)) &&
+		f.mntNSFilter.Filter(int64(evt.MountNS)) &&
+		f.pidFilter.Filter(int64(evt.ProcessID)) &&
+		f.ppidFilter.Filter(int64(evt.ParentProcessID)) &&
+		f.pidNSFilter.Filter(int64(evt.PIDNS)) &&
+		f.processorIDFilter.Filter(int64(evt.ProcessorID)) &&
+		f.podNameFilter.Filter(evt.Kubernetes.PodName) &&
+		f.podNSFilter.Filter(evt.Kubernetes.PodNamespace) &&
+		f.podUIDFilter.Filter(evt.Kubernetes.PodUID) &&
+		f.tidFilter.Filter(int64(evt.ThreadID)) &&
+		f.uidFilter.Filter(int64(evt.UserID))
+}
+
+func (f *ScopeFilter) Parse(field string, operatorAndValues string) error {
+	f.Enable()
+
+	switch field {
+	case "timestamp":
+		filter := f.timestampFilter
+		return filter.Parse(operatorAndValues)
+	case "processorId":
+		filter := f.processorIDFilter
+		return filter.Parse(operatorAndValues)
+	case "p", "pid", "processId":
+		filter := f.pidFilter
+		return filter.Parse(operatorAndValues)
+	case "tid", "threadId":
+		filter := f.tidFilter
+		return filter.Parse(operatorAndValues)
+	case "ppid", "parentProcessId":
+		filter := f.ppidFilter
+		return filter.Parse(operatorAndValues)
+	case "hostTid", "hostThreadId":
+		filter := f.hostTidFilter
+		return filter.Parse(operatorAndValues)
+	case "hostPid", "hostParentProcessId":
+		filter := f.hostPidFilter
+		return filter.Parse(operatorAndValues)
+	case "uid", "userId":
+		filter := f.uidFilter
+		return filter.Parse(operatorAndValues)
+	case "mntns", "mountNamespace":
+		filter := f.mntNSFilter
+		return filter.Parse(operatorAndValues)
+	case "pidns", "pidNamespace":
+		filter := f.pidNSFilter
+		return filter.Parse(operatorAndValues)
+	case "processName", "comm":
+		filter := f.processNameFilter
+		return filter.Parse(operatorAndValues)
+	case "hostName":
+		filter := f.hostNameFilter
+		return filter.Parse(operatorAndValues)
+	case "cgroupId":
+		filter := f.cgroupIDFilter
+		return filter.Parse(operatorAndValues)
+	// we reserve host for negating "container" scope
+	case "host":
+		filter := f.containerFilter
+		filter.Enable()
+		return filter.add(false, Equal)
+	case "container":
+		// Handle container state filtering: container, container=started
+		// All container filters require containerFilter to be enabled
+		f.containerFilter.Enable()
+		if err := f.containerFilter.add(true, Equal); err != nil {
+			return errfmt.WrapError(err)
+		}
+
+		if operatorAndValues == "" {
+			// Just "container" - any container (ID != "")
+			return nil
+		}
+
+		// Parse container=started
+		if operatorAndValues == "=started" {
+			// Only started containers (ContainerStarted == true)
+			f.containerStartedFilter.Enable()
+			return f.containerStartedFilter.add(true, Equal)
+		}
+
+		return InvalidExpression(operatorAndValues)
+	// TODO: change this and below container filters to the format
+	// eventname.scope.container.id and so on...
+	case "containerId":
+		filter := f.containerIDFilter
+		return addContainer[*StringFilter](f, filter, operatorAndValues)
+	case "containerImage":
+		filter := f.containerImageFilter
+		return addContainer[*StringFilter](f, filter, operatorAndValues)
+	case "containerImageDigest":
+		filter := f.containerImageDigestFilter
+		return addContainer[*StringFilter](f, filter, operatorAndValues)
+	case "containerName":
+		filter := f.containerNameFilter
+		return addContainer[*StringFilter](f, filter, operatorAndValues)
+	// TODO: change this and below pod filters to the format
+	// eventname.scope.kubernetes.podName and so on...
+	case "podName":
+		filter := f.podNameFilter
+		return addContainer[*StringFilter](f, filter, operatorAndValues)
+	case "podNamespace":
+		filter := f.podNSFilter
+		return addContainer[*StringFilter](f, filter, operatorAndValues)
+	case "podUid":
+		filter := f.podUIDFilter
+		return addContainer[*StringFilter](f, filter, operatorAndValues)
+	case "podSandbox":
+		filter := f.podSandboxFilter
+		return addContainer[*BoolFilter](f, filter, operatorAndValues)
+	case "syscall":
+		filter := f.syscallFilter
+		return filter.Parse(operatorAndValues)
+	}
+	return InvalidScopeField(field)
+}
+
+func addContainer[T any](f *ScopeFilter, filter Filter[T], operatorAndValues string) error {
+	err := filter.Parse(operatorAndValues)
+	if err != nil {
+		return errfmt.WrapError(err)
+	}
+	if err = f.containerFilter.add(true, Equal); err != nil {
+		return errfmt.WrapError(err)
+	}
+	f.containerFilter.Enable()
+	return nil
+}
+
+func (f *ScopeFilter) Clone() *ScopeFilter {
+	if f == nil {
+		return nil
+	}
+
+	n := &ScopeFilter{}
+
+	n.enabled = f.enabled
+	n.timestampFilter = f.timestampFilter.Clone()
+	n.processorIDFilter = f.processorIDFilter.Clone()
+	n.pidFilter = f.pidFilter.Clone()
+	n.tidFilter = f.tidFilter.Clone()
+	n.ppidFilter = f.ppidFilter.Clone()
+	n.hostPidFilter = f.hostPidFilter.Clone()
+	n.hostTidFilter = f.hostTidFilter.Clone()
+	n.hostPpidFilter = f.hostPpidFilter.Clone()
+	n.uidFilter = f.uidFilter.Clone()
+	n.mntNSFilter = f.mntNSFilter.Clone()
+	n.pidNSFilter = f.pidNSFilter.Clone()
+	n.processNameFilter = f.processNameFilter.Clone()
+	n.hostNameFilter = f.hostNameFilter.Clone()
+	n.cgroupIDFilter = f.cgroupIDFilter.Clone()
+	n.containerFilter = f.containerFilter.Clone()
+	n.containerStartedFilter = f.containerStartedFilter.Clone()
+	n.containerIDFilter = f.containerIDFilter.Clone()
+	n.containerImageFilter = f.containerImageFilter.Clone()
+	n.containerImageDigestFilter = f.containerImageDigestFilter.Clone()
+	n.containerNameFilter = f.containerNameFilter.Clone()
+	n.podNameFilter = f.podNameFilter.Clone()
+	n.podNSFilter = f.podNSFilter.Clone()
+	n.podUIDFilter = f.podUIDFilter.Clone()
+	n.podSandboxFilter = f.podSandboxFilter.Clone()
+	n.syscallFilter = f.syscallFilter.Clone()
+
+	return n
+}

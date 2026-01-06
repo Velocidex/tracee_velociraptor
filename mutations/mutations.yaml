@@ -1,5 +1,6 @@
 ExcludedFiles:
   - _test.go
+  - _grpc.pb.go
 
 Mutations:
   - From: "libbpf/src/*"
@@ -34,6 +35,10 @@ Mutations:
     StripPrefix: tracee/pkg/
     To: userspace/
 
+  - From: tracee/pkg/filters/**/*.go
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
   - From: tracee/pkg/datastores/dns/*.go
     StripPrefix: tracee/pkg/
     To: userspace/
@@ -44,6 +49,18 @@ Mutations:
   - From: tracee/types/{protocol,trace,detect}/*.go
     StripPrefix: tracee/types/
     To: userspace/types/
+
+  - From: tracee/pkg/cmd/flags/{policy.go,scope.go,event.go,runtime.go,errors.go,flags.go}
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
+  - From: tracee/pkg/policy/v1beta1/**/*.go
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
+  - From: tracee/api/**/*.go
+    StripPrefix: tracee/
+    To: userspace/
 
   - From: tracee/pkg/events/derive/{derive.go,errors.go,hooked_seq_ops.go,hooked_syscall.go,net_flow.go,net_packet.go,net_packet_helpers.go,net_tcp.go,process_execute_failed.go}
     StripPrefix: tracee/pkg/
@@ -61,7 +78,11 @@ Mutations:
     StripPrefix: tracee/pkg/
     To: userspace/
 
-  - From: tracee/common/{fileutil,interfaces,set,cgroup,counter,mount,errfmt,logger,parsers,capabilities,environment,elf}/*.go
+  - From: tracee/pkg/policy/{policy.go,policies.go,errors.go,policies_compute.go,equality.go,equality_data.go,event_flags.go}
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
+  - From: tracee/common/{bitwise,proc,fileutil,interfaces,set,cgroup,counter,mount,errfmt,logger,parsers,capabilities,environment,elf,stringutil}/*.go
     StripPrefix: tracee/common/
     To: userspace/
 
@@ -87,4 +108,12 @@ Mutations:
 
   - Match: github.com/aquasecurity/tracee/types/
     Replace: github.com/Velocidex/tracee_velociraptor/userspace/types/
+    Glob: userspace/**/*.go
+
+  - Match: github.com/aquasecurity/tracee/api/
+    Replace: github.com/Velocidex/tracee_velociraptor/userspace/api/
+    Glob: userspace/**/*.go
+
+  - Match: k8s.io/apimachinery/pkg/util/validation
+    Replace: github.com/Velocidex/tracee_velociraptor/userspace/compat/validation
     Glob: userspace/**/*.go

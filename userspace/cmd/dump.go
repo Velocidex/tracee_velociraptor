@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Velocidex/tracee_velociraptor/userspace/ebpf"
+	"github.com/Velocidex/tracee_velociraptor/manager"
+	"github.com/Velocidex/tracee_velociraptor/userspace/cmd/flags"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
+	"github.com/Velocidex/tracee_velociraptor/userspace/policy/v1beta1"
 	"github.com/alecthomas/kingpin"
 )
 
@@ -17,7 +19,7 @@ var (
 
 	dump_command_sets = dump_command.Flag("sets", "Specify events as sets").Bool()
 
-	dump_command_policy = dump_command.Flag("policy", "Policy to load").String()
+	dump_command_policy = dump_command.Flag("policy", "Policy to load").Strings()
 )
 
 func doDump() {
@@ -58,8 +60,8 @@ func doDump() {
 		}
 	}
 
-	config := ebpf.Config{
-		Options: ebpf.OptTranslateFDFilePath | ebpf.OptExecEnv,
+	config := manager.Config{
+		Options: manager.OptTranslateFDFilePath | manager.OptExecEnv,
 
 		// This does not matter here because the program exits as soon
 		// as the provider is idle, but in a long living program this
@@ -67,17 +69,33 @@ func doDump() {
 		IdleUnloadTimeout: 5 * time.Second,
 	}
 
-	manager, err := ebpf.NewEBPFManager(ctx, config, logger)
+	mgr, err := manager.NewEBPFManager(ctx, config, logger)
 	if err != nil {
 		kingpin.FatalIfError(err, "NewEBPFManager")
 	}
-	defer manager.Close()
+	defer mgr.Close()
 
-	opts := ebpf.EBPFWatchOptions{
+	opts := manager.EBPFWatchOptions{
 		SelectedEvents: selected_events,
 	}
 
-	output_chan, closer, err := manager.Watch(ctx, opts)
+	if len(*dump_command_policy) > 0 {
+		policies, err := v1beta1.PoliciesFromPaths(*dump_command_policy)
+		kingpin.FatalIfError(err, "NewEBPFManager")
+
+		fmt.Printf("Policies %#v\n", policies)
+
+		scope_map, event_map, err := flags.PrepareFilterMapsFromPolicies(policies)
+		kingpin.FatalIfError(err, "PrepareFilterMapsFromPolicies")
+		ps, err := flags.CreatePolicies(scope_map, event_map)
+		kingpin.FatalIfError(err, "CreatePolicies")
+
+		fmt.Printf("Policies %#v\n", ps)
+
+		return
+	}
+
+	output_chan, closer, err := mgr.Watch(ctx, opts)
 	if err != nil {
 		logger.Error("Watch: %v", err)
 		return

@@ -1,0 +1,15 @@
+pkg: manager
+
+dest: "manager/"
+fmt: false
+compression:
+  compress: true
+  method: BestCompression
+
+tags: "amd64"
+output: "ab0x_amd64.go"
+custom:
+  - files:
+      - "manager/ebpf_bpfel.o"
+    base: manager/
+    prefix: userspace/ebpf/

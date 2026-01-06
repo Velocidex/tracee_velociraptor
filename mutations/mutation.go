@@ -27,6 +27,10 @@ type mutation struct {
 	Glob    string `json:"Glob"`
 
 	DeleteGlob string `json:"DeleteGlob"`
+
+	// Symlink files
+	LinkFrom string `json:"LinkFrom"`
+	LinkTo   string `json:"LinkTo"`
 }
 
 type mutationFile struct {
@@ -165,6 +169,25 @@ func (self *mutationFile) ApplyMutations() error {
 				}
 			}
 		}
+
+		if m.LinkFrom != "" {
+			/*
+				from_path, err := filepath.Abs(m.LinkFrom)
+				if err != nil {
+					return err
+				}
+
+				to_path, err := filepath.Abs(m.LinkTo)
+				if err != nil {
+					return err
+				}
+			*/
+			err := os.Symlink(m.LinkTo, m.LinkFrom)
+			if err != nil {
+				return err
+			}
+		}
+
 	}
 
 	return nil

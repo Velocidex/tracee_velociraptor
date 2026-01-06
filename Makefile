@@ -9,8 +9,11 @@ race:
 
 sync:
 	go run make.go -v SyncCode
+	#	git checkout origin/master ./userspace/ebpf/ab0x* ./userspace/ebpf/ebpf_bpfel.go
 
 clean:
 	rm -rf ./c/ ./userspace/
+
+cleanbuild: clean sync bin
 
 full: clean sync generate bin

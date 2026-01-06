@@ -37,6 +37,7 @@ const (
 )
 
 type BPFMap Map
+type BPFMapLow Map
 
 // Fixme!
 func (self BPFMap) GetValue(mapkey unsafe.Pointer) ([]byte, error) {

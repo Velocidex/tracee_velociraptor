@@ -3,7 +3,7 @@
 package events
 
 import (
-	pb "github.com/aquasecurity/tracee/api/v1beta1"
+	pb "github.com/Velocidex/tracee_velociraptor/userspace/api/v1beta1"
 )
 
 // parseEventDataExtended is a stub for non-extended builds
