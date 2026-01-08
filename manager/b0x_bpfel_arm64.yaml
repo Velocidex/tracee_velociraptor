@@ -1,0 +1,13 @@
+pkg: manager
+
+dest: "manager/"
+fmt: false
+compression:
+  compress: true
+  method: BestCompression
+
+tags: "arm64"
+output: "ab0x_arm64.go"
+custom:
+  - files:
+      - "manager/ebpf_bpfel.o"

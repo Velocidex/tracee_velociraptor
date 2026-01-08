@@ -1,0 +1,46 @@
+package dependencies
+
+import (
+	"golang.org/x/exp/slices"
+
+	"github.com/Velocidex/tracee_velociraptor/userspace/ebpf/probes"
+	"github.com/Velocidex/tracee_velociraptor/userspace/events"
+)
+
+type ProbeNode struct {
+	handle     probes.Handle
+	dependents []events.ID
+}
+
+func NewProbeNode(handle probes.Handle, dependents []events.ID) *ProbeNode {
+	return &ProbeNode{
+		handle:     handle,
+		dependents: dependents,
+	}
+}
+
+func (hn *ProbeNode) GetHandle() probes.Handle {
+	return hn.handle
+}
+
+func (hn *ProbeNode) GetDependents() []events.ID {
+	return slices.Clone(hn.dependents)
+}
+
+func (hn *ProbeNode) addDependent(dependent events.ID) {
+	if !slices.Contains(hn.dependents, dependent) {
+		hn.dependents = append(hn.dependents, dependent)
+	}
+}
+
+// removeDependent removes the given dependent from the node.
+// Returns true if the node has no more dependents after removal, false otherwise.
+func (hn *ProbeNode) removeDependent(dependent events.ID) bool {
+	for i, d := range hn.dependents {
+		if d == dependent {
+			hn.dependents = append(hn.dependents[:i], hn.dependents[i+1:]...)
+			break
+		}
+	}
+	return len(hn.dependents) == 0
+}

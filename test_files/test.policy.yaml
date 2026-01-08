@@ -1,0 +1,11 @@
+apiVersion: tracee.aquasec.com/v1beta1
+kind: Policy
+metadata:
+  name: file-open-home
+spec:
+  scope:
+    - global
+  rules:
+    - event: security_file_open
+      filters:
+        - args.pathname=/home/*

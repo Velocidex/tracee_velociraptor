@@ -3,7 +3,7 @@ package dns
 import (
 	"time"
 
-	"github.com/aquasecurity/tracee/api/v1beta1/datastores"
+	"github.com/Velocidex/tracee_velociraptor/userspace/api/v1beta1/datastores"
 )
 
 // DataStore interface implementation

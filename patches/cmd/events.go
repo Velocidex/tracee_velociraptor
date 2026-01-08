@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Velocidex/ordereddict"
-	"github.com/Velocidex/tracee_velociraptor/userspace/ebpf"
+	"github.com/Velocidex/tracee_velociraptor/manager"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/alecthomas/kingpin"
 )
@@ -17,7 +17,7 @@ var (
 
 func getEventsBySets() map[string][]string {
 	sets := make(map[string][]string)
-	all_events := ebpf.GetEvents()
+	all_events := manager.GetEvents()
 	for _, event_name := range all_events.Keys() {
 		desc, _ := all_events.Get(event_name)
 		e, ok := desc.(*ordereddict.Dict)
@@ -39,7 +39,7 @@ func getEventsBySets() map[string][]string {
 }
 
 func getEventId(event_name string) (events.ID, error) {
-	all_events := ebpf.GetEvents()
+	all_events := manager.GetEvents()
 	desc_any, pres := all_events.Get(event_name)
 	if !pres {
 		return 0, fmt.Errorf("Unknown event name %v", event_name)
@@ -69,7 +69,7 @@ func doEvents() {
 		return
 	}
 
-	serialized, err := json.MarshalIndent(ebpf.GetEvents(), " ", "  ")
+	serialized, err := json.MarshalIndent(manager.GetEvents(), " ", "  ")
 	kingpin.FatalIfError(err, "doEvents")
 
 	fmt.Println(string(serialized))

@@ -5,7 +5,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	pb "github.com/aquasecurity/tracee/api/v1beta1"
+	pb "github.com/Velocidex/tracee_velociraptor/userspace/api/v1beta1"
 	"github.com/Velocidex/tracee_velociraptor/userspace/logger"
 	"github.com/Velocidex/tracee_velociraptor/userspace/parsers"
 	"github.com/Velocidex/tracee_velociraptor/userspace/types/trace"

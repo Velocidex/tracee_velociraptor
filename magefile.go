@@ -18,7 +18,6 @@ type Builder struct{}
 
 func (self *Builder) Env() map[string]string {
 	env := make(map[string]string)
-	env["GOPACKAGE"] = "ebpf"
 	return env
 }
 
@@ -62,7 +61,7 @@ func (self *Builder) Generate() error {
 }
 
 func (self *Builder) generate() error {
-	closer, err := self.cwd("userspace/ebpf")
+	closer, err := self.cwd("manager")
 	if err != nil {
 		return err
 	}
@@ -76,8 +75,9 @@ func (self *Builder) generate() error {
 			"-type", "event_config_t",
 			"-no-global-types",
 			"-target", "bpfel",
-			"ebpf", "../../c/tracee.bpf.c",
-			"--", "-I../../c/", "-D__TARGET_ARCH_x86", "-DDEBUG_K",
+			"-go-package", "manager",
+			"ebpf", "../c/tracee.bpf.c",
+			"--", "-I../c/", "-D__TARGET_ARCH_x86", "-DDEBUG_K",
 		)
 
 	} else if runtime.GOARCH == "arm64" {
@@ -88,8 +88,9 @@ func (self *Builder) generate() error {
 			"-type", "event_config_t",
 			"-no-global-types",
 			"-target", "bpfel",
-			"ebpf", "../../c/tracee.bpf.c",
-			"--", "-I../../c/", "-D__TARGET_ARCH_arm64", "-DDEBUG_K",
+			"-go-package", "manager",
+			"ebpf", "../c/tracee.bpf.c",
+			"--", "-I../c/", "-D__TARGET_ARCH_arm64", "-DDEBUG_K",
 		)
 
 	} else {
@@ -101,7 +102,7 @@ func (self *Builder) generate() error {
 func (self *Builder) fixAssets() error {
 	// We only use little endian for the moment
 	for _, f := range []string{
-		"userspace/ebpf/ebpf_bpfel.go",
+		"manager/manager_bpfel.go",
 	} {
 		replace_string_in_file(f, `//go:embed `, "//")
 		replace_string_in_file(f, `bytes.NewReader(_EbpfBytes)`,
@@ -109,23 +110,23 @@ func (self *Builder) fixAssets() error {
 	}
 
 	if runtime.GOARCH == "amd64" {
-		err := fileb0x("userspace/ebpf/b0x_bpfel_amd64.yaml")
+		err := fileb0x("manager/b0x_bpfel_amd64.yaml")
 		if err != nil {
 			return err
 		}
 
-		err = replace_string_in_file("userspace/ebpf/ab0x_amd64.go", "func init()", "func Init()")
+		err = replace_string_in_file("manager/ab0x_amd64.go", "func init()", "func Init()")
 		if err != nil {
 			return err
 		}
 
 	} else if runtime.GOARCH == "arm64" {
-		err := fileb0x("userspace/ebpf/b0x_bpfel_arm64.yaml")
+		err := fileb0x("manager/b0x_bpfel_arm64.yaml")
 		if err != nil {
 			return err
 		}
 
-		err = replace_string_in_file("userspace/ebpf/ab0x_arm64.go", "func init()", "func Init()")
+		err = replace_string_in_file("manager/ab0x_arm64.go", "func init()", "func Init()")
 		if err != nil {
 			return err
 		}

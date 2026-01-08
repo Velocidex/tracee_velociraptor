@@ -8,7 +8,7 @@ import (
 
 	bpf "github.com/Velocidex/tracee_velociraptor/userspace/compat/bpf"
 
-	pb "github.com/aquasecurity/tracee/api/v1beta1"
+	pb "github.com/Velocidex/tracee_velociraptor/userspace/api/v1beta1"
 	"github.com/Velocidex/tracee_velociraptor/userspace/errfmt"
 	"github.com/Velocidex/tracee_velociraptor/userspace/parsers"
 	timeutil "github.com/Velocidex/tracee_velociraptor/userspace/time"
