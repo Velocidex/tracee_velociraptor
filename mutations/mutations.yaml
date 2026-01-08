@@ -74,11 +74,15 @@ Mutations:
     StripPrefix: tracee/pkg/
     To: userspace/
 
+  - From: tracee/pkg/events/dependencies/{event.go,manager.go,manager_events.go,manager_tailcalls.go,probes.go,manager_probes.go,tailcalls.go,actions.go,errors.go}
+    StripPrefix: tracee/pkg/
+    To: userspace/
+
   - From: tracee/pkg/datastores/symbol/{kernel.go,table.go}
     StripPrefix: tracee/pkg/
     To: userspace/
 
-  - From: tracee/pkg/policy/{policy.go,policies.go,errors.go,policies_compute.go,equality.go,equality_data.go,event_flags.go}
+  - From: tracee/pkg/policy/{policies_iterator.go,policy.go,policies.go,errors.go,policies_compute.go,equality.go,equality_data.go,event_flags.go}
     StripPrefix: tracee/pkg/
     To: userspace/
 
@@ -89,6 +93,13 @@ Mutations:
   - From: patches/**/*
     StripPrefix: patches/
     To: userspace/
+
+  ## WIP: Remove when done.
+  #- LinkFrom: userspace/policy/ebpf.go
+  #  LinkTo: ../../wip/ebpf.go
+  #
+  #- LinkFrom: userspace/policy/policy_manager.go
+  #  LinkTo: "../../wip/policy_manager.go"
 
   - Match: '"github.com/aquasecurity/tracee/common/timeutil"'
     Replace: timeutil "github.com/Velocidex/tracee_velociraptor/userspace/time"

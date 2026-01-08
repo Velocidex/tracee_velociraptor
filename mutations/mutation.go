@@ -182,8 +182,9 @@ func (self *mutationFile) ApplyMutations() error {
 					return err
 				}
 			*/
+			fmt.Printf("Link %v to %v\n", m.LinkTo, m.LinkFrom)
 			err := os.Symlink(m.LinkTo, m.LinkFrom)
-			if err != nil {
+			if err != nil && !strings.Contains(err.Error(), "file exists") {
 				return err
 			}
 		}

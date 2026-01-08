@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"sync"
@@ -12,12 +13,18 @@ import (
 	"github.com/Velocidex/ordereddict"
 	"github.com/Velocidex/tracee_velociraptor/userspace/bufferdecoder"
 	"github.com/Velocidex/tracee_velociraptor/userspace/cgroup"
+	"github.com/Velocidex/tracee_velociraptor/userspace/cmd/flags"
 	"github.com/Velocidex/tracee_velociraptor/userspace/compat/bpf"
+	"github.com/Velocidex/tracee_velociraptor/userspace/datastores/container"
 	dnscache "github.com/Velocidex/tracee_velociraptor/userspace/datastores/dns"
 	"github.com/Velocidex/tracee_velociraptor/userspace/datastores/symbol"
 	"github.com/Velocidex/tracee_velociraptor/userspace/ebpf/probes"
 	"github.com/Velocidex/tracee_velociraptor/userspace/environment"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
+	"github.com/Velocidex/tracee_velociraptor/userspace/events/data"
+	"github.com/Velocidex/tracee_velociraptor/userspace/events/dependencies"
+	"github.com/Velocidex/tracee_velociraptor/userspace/policy"
+	"github.com/Velocidex/tracee_velociraptor/userspace/policy/v1beta1"
 	time_util "github.com/Velocidex/tracee_velociraptor/userspace/time"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/perf"
@@ -76,6 +83,13 @@ type EBPFManager struct {
 	dataTypeDecoder bufferdecoder.TypeDecoder
 
 	policies []string
+}
+
+func (self *EBPFManager) AddPolicies(policies []string) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	self.policies = append(self.policies, policies...)
 }
 
 func (self *EBPFManager) EidMonitored() []events.ID {
@@ -312,6 +326,7 @@ func (self *EBPFManager) setTailCall(eid events.ID, remove bool) error {
 }
 
 func (self *EBPFManager) setEventIDPolicy() error {
+	return nil
 
 	var event_inner_map *ebpf.Map
 
@@ -456,7 +471,7 @@ func (self *EBPFManager) loadEbpf() (err error) {
 	self.logger.Debug("Load done in %v", time.Now().Sub(start))
 
 	self.currently_loading = false
-	self.bpfModule = bpf.NewModule(self.collection)
+	self.bpfModule = bpf.NewModule(self.collection, self.spec)
 	self.probes, err = probes.NewDefaultProbeGroup(
 		self.bpfModule, false, false, "")
 	if err != nil {
@@ -502,6 +517,55 @@ func (self *EBPFManager) updateEbpfState() (err error) {
 	return err
 }
 
+func (self *EBPFManager) compilePolicies() error {
+	policies, err := v1beta1.PoliciesFromPaths(self.policies)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Policies %#v\n", policies)
+
+	scope_map, event_map, err := flags.PrepareFilterMapsFromPolicies(policies)
+	if err != nil {
+		return err
+	}
+	ps, err := flags.CreatePolicies(scope_map, event_map)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Policies %#v\n", ps)
+
+	depsManager := dependencies.NewDependenciesManager(
+		func(id events.ID) events.DependencyStrategy {
+			return events.Core.GetDefinitionByID(id).GetDependencies()
+		})
+
+	policyManager, err := policy.NewManager(
+		policy.ManagerConfig{}, depsManager, ps...)
+	if err != nil {
+		return err
+	}
+
+	eventDecodeTypes := make(map[events.ID][]data.DecodeAs)
+	for _, eventDefinition := range events.Core.GetDefinitions() {
+		id := eventDefinition.GetID()
+		fields := eventDefinition.GetFields()
+		for _, field := range fields {
+			eventDecodeTypes[id] = append(eventDecodeTypes[id], field.DecodeAs)
+		}
+	}
+
+	containerManager := &container.Manager{}
+	_, err = policyManager.UpdateBPF(self.bpfModule, containerManager,
+		eventDecodeTypes,
+		true,  // createNewMaps
+		false, // updateProcTree
+	)
+
+	return err
+}
+
 func (self *EBPFManager) Watch(
 	ctx context.Context, opts EBPFWatchOptions) (
 	chan *ordereddict.Dict, func(), error) {
@@ -528,8 +592,13 @@ func (self *EBPFManager) Watch(
 		}
 	}
 
+	err := self.compilePolicies()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// Update the ebpf state to reflect the new listene
-	err := self.updateEbpfState()
+	err = self.updateEbpfState()
 	if err != nil {
 		self.listeners = nil
 		return nil, nil, err

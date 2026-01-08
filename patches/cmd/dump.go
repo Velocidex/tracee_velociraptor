@@ -6,9 +6,7 @@ import (
 	"time"
 
 	"github.com/Velocidex/tracee_velociraptor/manager"
-	"github.com/Velocidex/tracee_velociraptor/userspace/cmd/flags"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
-	"github.com/Velocidex/tracee_velociraptor/userspace/policy/v1beta1"
 	"github.com/alecthomas/kingpin"
 )
 
@@ -79,21 +77,7 @@ func doDump() {
 		SelectedEvents: selected_events,
 	}
 
-	if len(*dump_command_policy) > 0 {
-		policies, err := v1beta1.PoliciesFromPaths(*dump_command_policy)
-		kingpin.FatalIfError(err, "NewEBPFManager")
-
-		fmt.Printf("Policies %#v\n", policies)
-
-		scope_map, event_map, err := flags.PrepareFilterMapsFromPolicies(policies)
-		kingpin.FatalIfError(err, "PrepareFilterMapsFromPolicies")
-		ps, err := flags.CreatePolicies(scope_map, event_map)
-		kingpin.FatalIfError(err, "CreatePolicies")
-
-		fmt.Printf("Policies %#v\n", ps)
-
-		return
-	}
+	mgr.AddPolicies(*dump_command_policy)
 
 	output_chan, closer, err := mgr.Watch(ctx, opts)
 	if err != nil {

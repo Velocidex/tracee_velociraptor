@@ -31,13 +31,17 @@ func (self *Map) Update(key, value interface{}) error {
 	return self.Put(key, value)
 }
 
+func (self *Map) FileDescriptor() int {
+	return self.FD()
+}
+
 const (
 	MapTypeArena      = ebpf.Arena
 	BPFProgTypeKprobe = ebpf.Kprobe
 )
 
-type BPFMap Map
-type BPFMapLow Map
+type BPFMap = Map
+type BPFMapLow = BPFMap
 
 // Fixme!
 func (self BPFMap) GetValue(mapkey unsafe.Pointer) ([]byte, error) {
@@ -54,10 +58,11 @@ func (sef *BPFLink) Destroy() error {
 
 type Module struct {
 	collection *ebpf.Collection
+	Specs      *ebpf.CollectionSpec
 }
 
-func NewModule(collection *ebpf.Collection) *Module {
-	return &Module{collection}
+func NewModule(collection *ebpf.Collection, spec *ebpf.CollectionSpec) *Module {
+	return &Module{collection, spec}
 }
 
 func (self *Module) GetProgram(name string) (*Program, error) {

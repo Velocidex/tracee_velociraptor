@@ -9,7 +9,6 @@ race:
 
 sync:
 	go run make.go -v SyncCode
-	#	git checkout origin/master ./userspace/ebpf/ab0x* ./userspace/ebpf/ebpf_bpfel.go
 
 clean:
 	rm -rf ./c/ ./userspace/
@@ -17,3 +16,6 @@ clean:
 cleanbuild: clean sync bin
 
 full: clean sync generate bin
+
+debug:
+	dlv debug "./userspace/cmd/" -- dump --policy ./test_files/test.policy.yaml security_file_open
