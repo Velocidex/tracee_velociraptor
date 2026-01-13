@@ -86,11 +86,10 @@ func (self *EBPFManager) EidMonitored() []events.ID {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
-	return self._EidMonitored()
+	return self.eidMonitored()
 }
 
-func (self *EBPFManager) _EidMonitored() []events.ID {
-
+func (self *EBPFManager) eidMonitored() []events.ID {
 	eid_monitored := make(map[events.ID]bool)
 	for _, listener := range self.listeners {
 		for _, eid := range listener.GetEIDs() {
@@ -103,42 +102,6 @@ func (self *EBPFManager) _EidMonitored() []events.ID {
 		res = append(res, eid)
 	}
 
-	return res
-}
-
-func (self *EBPFManager) Stats() (res Stats) {
-	self.mu.Lock()
-	defer self.mu.Unlock()
-
-	if self.currently_loading {
-		res.EBFProgramStatus = "Currently Loading"
-
-	} else if self.collection == nil {
-		res.EBFProgramStatus = "Unloaded"
-
-	} else {
-		res.EBFProgramStatus = "Loaded"
-	}
-
-	res.NumberOfListeners = len(self.listeners)
-	res.IdleTime = time.Now().Sub(self.idle_time)
-	res.IdleUnloadTimeout = self.idle_unload_time
-
-	for _, listener := range self.listeners {
-		eid_monitored := make(map[string]int)
-
-		for _, k := range listener.GetEIDs() {
-			desc, pres := CoreEvents[k]
-			if !pres {
-				continue
-			}
-
-			eid_monitored[desc.GetName()] = int(k)
-		}
-		res.EIDMonitored = append(res.EIDMonitored, eid_monitored)
-		res.EventCount += listener.GetCount()
-		res.PrefilterEventCount += listener.GetPrefilterEvents()
-	}
 	return res
 }
 
@@ -177,17 +140,16 @@ func (self *EBPFManager) EventLoop(ctx context.Context) {
 			continue
 		}
 
+		// Make a local copy of interested listeners.
 		self.mu.Lock()
-		listeners := self.listeners
-		self.mu.Unlock()
-
 		var interested_listeners []*listener
-		for _, l := range listeners {
+		for _, l := range self.listeners {
 			if !l.Prefilter(record.RawSample) {
 				continue
 			}
 			interested_listeners = append(interested_listeners, l)
 		}
+		self.mu.Unlock()
 
 		// No listeners - dont bother about it.
 		if len(interested_listeners) == 0 {
@@ -200,7 +162,9 @@ func (self *EBPFManager) EventLoop(ctx context.Context) {
 		}
 
 		for _, listener := range interested_listeners {
-			listener.Feed(eid, event)
+			if listener.IsTriggered(event.MatchedPolicies) {
+				listener.Feed(eid, event)
+			}
 		}
 	}
 }
@@ -228,7 +192,7 @@ func (self *EBPFManager) startHousekeeping(ctx context.Context) {
 
 func (self *EBPFManager) getRequiredKsyms() (res []string) {
 	tmp := make(map[string]bool)
-	for _, eid := range self._EidMonitored() {
+	for _, eid := range self.eidMonitored() {
 		definition, pres := CoreEvents[eid]
 		if !pres {
 			continue
@@ -251,7 +215,7 @@ func (self *EBPFManager) getRequiredKsyms() (res []string) {
 
 func (self *EBPFManager) getProbeHandles() (res []probes.Handle) {
 	tmp := make(map[probes.Handle]bool)
-	for _, eid := range self._EidMonitored() {
+	for _, eid := range self.eidMonitored() {
 		definition, pres := CoreEvents[eid]
 		if !pres {
 			continue
@@ -274,7 +238,7 @@ func (self *EBPFManager) getProbeHandles() (res []probes.Handle) {
 }
 
 func (self *EBPFManager) setTailCalls() error {
-	for _, eid := range self._EidMonitored() {
+	for _, eid := range self.eidMonitored() {
 		err := self.setTailCall(eid, tailCallsAdd)
 		if err != nil {
 			return err
@@ -458,8 +422,9 @@ func (self *EBPFManager) updateEbpfState() (err error) {
 func (self *EBPFManager) compilePolicies() error {
 	var policies []k8s.PolicyInterface
 
-	for _, p := range self.listeners {
+	for idx, p := range self.listeners {
 		policies = append(policies, p.Policy())
+		p.SetPolicyId(idx)
 	}
 
 	scope_map, event_map, err := flags.PrepareFilterMapsFromPolicies(policies)
@@ -492,6 +457,26 @@ func (self *EBPFManager) compilePolicies() error {
 	return err
 }
 
+func (self *EBPFManager) removeListener(new_listener *listener) {
+	new_listener.Close()
+
+	var new_listeners []*listener
+
+	for _, d := range self.listeners {
+		if d == new_listener {
+			continue
+		}
+		new_listeners = append(new_listeners, d)
+	}
+
+	self.listeners = new_listeners
+
+	// We are now idle.
+	if len(new_listeners) == 0 {
+		self.idle_time = time.Now()
+	}
+}
+
 func (self *EBPFManager) Watch(
 	ctx context.Context, opts EBPFWatchOptions) (
 	chan *ordereddict.Dict, func(), error) {
@@ -513,6 +498,8 @@ func (self *EBPFManager) Watch(
 	new_listener := NewListner(
 		self.logger, self.dnscache, ctx, self.ctx, events, p)
 	new_listener.SetPrefilter(opts.Prefilter)
+
+	// Add the new listener to the list.
 	self.listeners = append(self.listeners, new_listener)
 
 	// If the program is not already loaded, start it.
@@ -524,42 +511,27 @@ func (self *EBPFManager) Watch(
 		}
 	}
 
+	// Update the policies map
 	err = self.compilePolicies()
 	if err != nil {
+		self.removeListener(new_listener)
 		return nil, nil, err
 	}
 
-	// Update the ebpf state to reflect the new listene
+	// Update the ebpf state to reflect the new listeners
 	err = self.updateEbpfState()
 	if err != nil {
-		self.listeners = nil
+		self.removeListener(new_listener)
 		return nil, nil, err
 	}
 
 	return new_listener.output_chan,
-
 		// Remove the output chan from the listeners.
 		func() {
 			self.mu.Lock()
 			defer self.mu.Unlock()
 
-			new_listener.Close()
-
-			var new_listeners []*listener
-
-			for _, d := range self.listeners {
-				if d == new_listener {
-					continue
-				}
-				new_listeners = append(new_listeners, d)
-			}
-
-			self.listeners = new_listeners
-
-			// We are now idle.
-			if len(new_listeners) == 0 {
-				self.idle_time = time.Now()
-			}
+			self.removeListener(new_listener)
 		}, nil
 }
 

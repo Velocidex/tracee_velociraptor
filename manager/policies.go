@@ -3,7 +3,10 @@ package manager
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/Velocidex/tracee_velociraptor/userspace/cmd/flags"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
@@ -11,6 +14,15 @@ import (
 	"github.com/Velocidex/tracee_velociraptor/userspace/policy/v1beta1"
 	"gopkg.in/yaml.v2"
 )
+
+var (
+	idx uint64 = uint64(time.Now().UnixNano())
+)
+
+// Get unique ID
+func GetId() uint64 {
+	return atomic.AddUint64(&idx, 1)
+}
 
 func PolicyFromString(in string) (res k8s.PolicyInterface, err error) {
 	in = strings.TrimSpace(in)
@@ -34,6 +46,11 @@ func PolicyFromString(in string) (res k8s.PolicyInterface, err error) {
 	// bit simpler.
 	p.APIVersion = "tracee.aquasec.com/v1beta1"
 	p.Kind = "Policy"
+
+	// If the policy does not have a name, create a random name.
+	if p.Metadata.Name == "" {
+		p.Metadata.Name = fmt.Sprintf("Policy_%d", GetId())
+	}
 
 	err = p.Validate()
 	if err != nil {

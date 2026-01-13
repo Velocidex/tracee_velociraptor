@@ -13,14 +13,6 @@ type EBPFWatchOptions struct {
 	// applied in the kernel so they are essential for reducing CPU
 	// use.
 	//
-	// NOTE: Currently all watchers that watch the same event id will
-	// receive all events - regardless if their specific policy
-	// applies or if another listener selected the same event with
-	// another policy. Therefore events should be post-filtered again.
-	//
-	// Therefore, Policy filters should be considered as a performance
-	// optimization only.
-	//
 	// For example:
 	//
 	// metadata:

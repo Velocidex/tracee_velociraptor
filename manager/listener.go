@@ -53,6 +53,8 @@ type listener struct {
 	prefilter func(buf []byte) bool
 
 	policy k8s.PolicyInterface
+
+	policy_id int
 }
 
 func (self *listener) Policy() k8s.PolicyInterface {
@@ -271,6 +273,28 @@ func (self *listener) feed(
 	case self.output_chan <- event.Dict:
 		self.count++
 	}
+}
+
+func (self *listener) IsTriggered(policy_mask uint64) bool {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	my_policy_mask := uint64(1) << self.policy_id
+	return (policy_mask & my_policy_mask) > 0
+}
+
+func (self *listener) SetPolicyId(policy_idx int) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	self.policy_id = policy_idx
+}
+
+func (self *listener) GetPolicyId() int {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	return self.policy_id
 }
 
 func (self *listener) GetCount() int {
