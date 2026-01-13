@@ -24,6 +24,9 @@ type eventType struct {
 
 	System *ordereddict.Dict
 	tevent *trace.Event
+
+	// A bitmap of the policies that matched this event.
+	MatchedPolicies uint64
 }
 
 func (self *EBPFManager) decodeEvent(dataRaw []byte) (*eventType, events.ID, error) {
@@ -98,6 +101,7 @@ func (self *EBPFManager) decodeEvent(dataRaw []byte) (*eventType, events.ID, err
 			ReturnValue: int(eCtx.Retval),
 			Args:        args,
 		},
+		MatchedPolicies: eCtx.MatchedPolicies,
 	}, eCtx.EventID, nil
 }
 
