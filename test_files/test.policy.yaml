@@ -1,5 +1,4 @@
-apiVersion: tracee.aquasec.com/v1beta1
-kind: Policy
+# We support simpler policies with apiVersion and kind optional
 metadata:
   name: file-open-home
 spec:
