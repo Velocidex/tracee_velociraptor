@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"time"
 
 	"github.com/Velocidex/tracee_velociraptor/manager"
@@ -17,7 +19,7 @@ var (
 
 	dump_command_sets = dump_command.Flag("sets", "Specify events as sets").Bool()
 
-	dump_command_policy = dump_command.Flag("policy", "Policy to load").Strings()
+	dump_command_policy = dump_command.Flag("policy", "Policy to load").String()
 )
 
 func doDump() {
@@ -73,11 +75,15 @@ func doDump() {
 	}
 	defer mgr.Close()
 
-	opts := manager.EBPFWatchOptions{
-		SelectedEvents: selected_events,
+	p, err := getPolicy()
+	if err != nil {
+		kingpin.FatalIfError(err, "NewEBPFManager")
 	}
 
-	mgr.AddPolicies(*dump_command_policy)
+	opts := manager.EBPFWatchOptions{
+		SelectedEvents: selected_events,
+		Policy:         p,
+	}
 
 	output_chan, closer, err := mgr.Watch(ctx, opts)
 	if err != nil {
@@ -94,6 +100,17 @@ func doDump() {
 
 		fmt.Println(string(serialized))
 	}
+}
+
+func getPolicy() (string, error) {
+	fd, err := os.Open(*dump_command_policy)
+	if err != nil {
+		return "", err
+	}
+	defer fd.Close()
+
+	data, err := ioutil.ReadAll(fd)
+	return string(data), err
 }
 
 func init() {

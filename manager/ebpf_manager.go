@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"regexp"
 	"sync"
@@ -23,8 +22,8 @@ import (
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/data"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/dependencies"
+	k8s "github.com/Velocidex/tracee_velociraptor/userspace/k8s/apis/tracee.aquasec.com/v1beta1"
 	"github.com/Velocidex/tracee_velociraptor/userspace/policy"
-	"github.com/Velocidex/tracee_velociraptor/userspace/policy/v1beta1"
 	time_util "github.com/Velocidex/tracee_velociraptor/userspace/time"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/perf"
@@ -53,8 +52,6 @@ type EBPFManager struct {
 	collection        *ebpf.Collection
 	currently_loading bool
 
-	policy_id uint16
-
 	probes *probes.ProbeGroup
 
 	bpfModule    *bpf.Module
@@ -82,14 +79,7 @@ type EBPFManager struct {
 
 	dataTypeDecoder bufferdecoder.TypeDecoder
 
-	policies []string
-}
-
-func (self *EBPFManager) AddPolicies(policies []string) {
-	self.mu.Lock()
-	defer self.mu.Unlock()
-
-	self.policies = append(self.policies, policies...)
+	eventDecodeTypes map[events.ID][]data.DecodeAs
 }
 
 func (self *EBPFManager) EidMonitored() []events.ID {
@@ -291,7 +281,7 @@ func (self *EBPFManager) setTailCalls() error {
 		}
 	}
 
-	return self.setEventIDPolicy()
+	return nil
 }
 
 func (self *EBPFManager) setTailCall(eid events.ID, remove bool) error {
@@ -323,58 +313,6 @@ func (self *EBPFManager) setTailCall(eid events.ID, remove bool) error {
 		}
 	}
 	return nil
-}
-
-func (self *EBPFManager) setEventIDPolicy() error {
-	return nil
-
-	var event_inner_map *ebpf.Map
-
-	// The events_map_version is an inner map - we always renew it
-	// with a new map so we can easily account for events added and
-	// removed.
-	map_spec, pres := self.spec.Maps["events_map_version"]
-	if !pres {
-		return mapNotValid
-	}
-
-	event_inner_map, err := ebpf.NewMap(map_spec.InnerMap)
-	if err != nil {
-		return err
-	}
-
-	for _, key := range self._EidMonitored() {
-		eid := key
-
-		event_config := &ebpfEventConfigT{
-			SubmitForPolicies: uint64(self.policy_id),
-		}
-
-		/*
-			params, pres := self.eventsFieldTypes[eid]
-			if pres {
-				for n, paramType := range params {
-					event_config.FieldTypes |= (uint64(paramType) << (8 * n))
-				}
-			}
-		*/
-
-		err = event_inner_map.Put(unsafe.Pointer(&eid),
-			unsafe.Pointer(event_config))
-		if err != nil {
-			return err
-		}
-	}
-
-	event_inner_map_fd := uint32(event_inner_map.FD())
-	events_map_version, pres := self.collection.Maps["events_map_version"]
-	if !pres {
-		return mapNotValid
-	}
-
-	return events_map_version.Put(
-		unsafe.Pointer(&self.policy_id),
-		unsafe.Pointer(&event_inner_map_fd))
 }
 
 func (self *EBPFManager) Close() {}
@@ -518,12 +456,11 @@ func (self *EBPFManager) updateEbpfState() (err error) {
 }
 
 func (self *EBPFManager) compilePolicies() error {
-	policies, err := v1beta1.PoliciesFromPaths(self.policies)
-	if err != nil {
-		return err
-	}
+	var policies []k8s.PolicyInterface
 
-	fmt.Printf("Policies %#v\n", policies)
+	for _, p := range self.listeners {
+		policies = append(policies, p.Policy())
+	}
 
 	scope_map, event_map, err := flags.PrepareFilterMapsFromPolicies(policies)
 	if err != nil {
@@ -533,8 +470,6 @@ func (self *EBPFManager) compilePolicies() error {
 	if err != nil {
 		return err
 	}
-
-	fmt.Printf("Policies %#v\n", ps)
 
 	depsManager := dependencies.NewDependenciesManager(
 		func(id events.ID) events.DependencyStrategy {
@@ -547,18 +482,9 @@ func (self *EBPFManager) compilePolicies() error {
 		return err
 	}
 
-	eventDecodeTypes := make(map[events.ID][]data.DecodeAs)
-	for _, eventDefinition := range events.Core.GetDefinitions() {
-		id := eventDefinition.GetID()
-		fields := eventDefinition.GetFields()
-		for _, field := range fields {
-			eventDecodeTypes[id] = append(eventDecodeTypes[id], field.DecodeAs)
-		}
-	}
-
 	containerManager := &container.Manager{}
 	_, err = policyManager.UpdateBPF(self.bpfModule, containerManager,
-		eventDecodeTypes,
+		self.eventDecodeTypes,
 		true,  // createNewMaps
 		false, // updateProcTree
 	)
@@ -573,13 +499,19 @@ func (self *EBPFManager) Watch(
 	self.mu.Lock()
 	defer self.mu.Unlock()
 
-	if opts.Policy != "" {
-		self.policies = append(self.policies, opts.Policy)
+	p, err := PolicyFromString(opts.Policy)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	events, err := EventIDsForPolicy(p)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Add a new listener to the event loop.
-	new_listener := NewListner(self.logger, self.dnscache, ctx,
-		self.ctx, opts.SelectedEvents)
+	new_listener := NewListner(
+		self.logger, self.dnscache, ctx, self.ctx, events, p)
 	new_listener.SetPrefilter(opts.Prefilter)
 	self.listeners = append(self.listeners, new_listener)
 
@@ -592,7 +524,7 @@ func (self *EBPFManager) Watch(
 		}
 	}
 
-	err := self.compilePolicies()
+	err = self.compilePolicies()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -657,32 +589,28 @@ func NewEBPFManager(
 	}
 
 	self := &EBPFManager{
-		policy_id:        1,
 		logger:           logger,
 		ebpf_config_obj:  config_obj,
 		idle_unload_time: config.IdleUnloadTimeout,
 		ctx:              ctx,
 		KernelConfig:     kernelConfig,
-		//eventsFieldTypes: make(map[events.ID][]bufferdecoder.ArgType),
-		cgroups:         cgroups_obj,
-		dataTypeDecoder: bufferdecoder.NewTypeDecoder(),
+		cgroups:          cgroups_obj,
+		dataTypeDecoder:  bufferdecoder.NewTypeDecoder(),
+		eventDecodeTypes: make(map[events.ID][]data.DecodeAs),
 	}
 
 	if self.idle_unload_time == 0 {
 		self.idle_unload_time = time.Duration(5 * time.Minute)
 	}
 
-	/*
-		// Initialize the event parameter types
-		for _, eventDefinition := range events.Core.GetDefinitions() {
-			id := eventDefinition.GetID()
-			params := eventDefinition.GetParams()
-			for _, param := range params {
-				self.eventsFieldTypes[id] = append(self.eventsFieldTypes[id],
-					bufferdecoder.GetParamType(param.Type))
-			}
+	for _, eventDefinition := range events.Core.GetDefinitions() {
+		id := eventDefinition.GetID()
+		fields := eventDefinition.GetFields()
+		for _, field := range fields {
+			self.eventDecodeTypes[id] = append(self.eventDecodeTypes[id],
+				field.DecodeAs)
 		}
-	*/
+	}
 
 	// Set the clocks and initialize.
 	time_util.Init(unix.CLOCK_BOOTTIME)

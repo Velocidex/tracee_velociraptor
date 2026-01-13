@@ -8,6 +8,7 @@ import (
 	dnscache "github.com/Velocidex/tracee_velociraptor/userspace/datastores/dns"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/Velocidex/tracee_velociraptor/userspace/events/derive"
+	k8s "github.com/Velocidex/tracee_velociraptor/userspace/k8s/apis/tracee.aquasec.com/v1beta1"
 )
 
 type Action bool
@@ -50,6 +51,12 @@ type listener struct {
 	logger Logger
 
 	prefilter func(buf []byte) bool
+
+	policy k8s.PolicyInterface
+}
+
+func (self *listener) Policy() k8s.PolicyInterface {
+	return self.policy
 }
 
 func (self *listener) SetPrefilter(filter func(in []byte) bool) {
@@ -297,12 +304,15 @@ func (self *listener) close() {
 func NewListner(
 	logger Logger, dnscache *dnscache.DNSCache,
 	caller_ctx, global_ctx context.Context,
-	selected_events []events.ID) *listener {
+	selected_events []events.ID,
+	policy k8s.PolicyInterface) *listener {
+
 	res := &listener{
 		output_chan:   make(chan *ordereddict.Dict),
 		global_ctx:    global_ctx,
 		caller_ctx:    caller_ctx,
 		eid_monitored: make(map[events.ID]Action),
+		policy:        policy,
 	}
 
 	for _, eid := range selected_events {
