@@ -312,6 +312,11 @@ func (self *EBPFManager) unloadEbpf() {
 		listener.Close()
 	}
 
+	err := self.cgroups.Destroy()
+	if err != nil {
+		self.logger.Error("Failed to unmount cgroups: %v", err)
+	}
+
 	self.probes.DetachAll()
 	self.collection.Close()
 	self.collection = nil
