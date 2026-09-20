@@ -554,10 +554,12 @@ func NewEBPFManager(
 	config_obj.PoliciesVersion = 1
 	config_obj.PoliciesConfig.EnabledPolicies = ^uint64(0)
 
-	// Load the kernel config
+	// Load the kernel config. A missing /boot/config-$(uname -r) is
+	// common (e.g. cloud images) and LoadKconfigValues falls back to
+	// sane defaults, so this is not fatal.
 	kernelConfig, err := environment.InitKernelConfig()
 	if err != nil {
-		return nil, err
+		logger.Warn("Unable to read kernel config, assuming defaults: %v", err)
 	}
 
 	cgroups_obj, err := cgroup.NewCgroups("/sys/fs/cgroup/", false)
