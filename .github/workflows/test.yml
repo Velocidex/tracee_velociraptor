@@ -36,6 +36,8 @@ jobs:
       shell: bash
       run: |
         make full
+        # Make sure we can actually load the ebpf program.
+        sudo make load_test
 
     - name: StoreBuild
       uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1

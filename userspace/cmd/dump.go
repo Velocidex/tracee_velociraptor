@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Velocidex/tracee_velociraptor/manager"
-	"github.com/Velocidex/tracee_velociraptor/userspace/events"
 	"github.com/alecthomas/kingpin"
 )
 
@@ -28,7 +27,7 @@ func doDump() {
 
 	logger := NewLogger()
 
-	var selected_events []events.ID
+	var selected_events []string
 
 	if *dump_command_sets {
 		sets := getEventsBySets()
@@ -40,24 +39,12 @@ func doDump() {
 			}
 
 			for _, event_name := range event_names {
-				id, err := getEventId(event_name)
-				if err != nil {
-					logger.Error("%v", err)
-					continue
-				}
-				selected_events = append(selected_events, id)
+				selected_events = append(selected_events, event_name)
 			}
 		}
 
 	} else {
-		for _, event_name := range *dump_command_events {
-			id, err := getEventId(event_name)
-			if err != nil {
-				logger.Error("%v", err)
-				continue
-			}
-			selected_events = append(selected_events, id)
-		}
+		selected_events = *dump_command_events
 	}
 
 	config := manager.Config{
@@ -75,14 +62,16 @@ func doDump() {
 	}
 	defer mgr.Close()
 
-	p, err := getPolicy()
-	if err != nil {
-		kingpin.FatalIfError(err, "NewEBPFManager")
+	var policy string
+	policy, err = getPolicy()
+	kingpin.FatalIfError(err, "getPolicy")
+
+	if policy == "" {
+		policy = generateDefaultPolicy(selected_events)
 	}
 
 	opts := manager.EBPFWatchOptions{
-		SelectedEvents: selected_events,
-		Policy:         p,
+		Policy: policy,
 	}
 
 	output_chan, closer, err := mgr.Watch(ctx, opts)
@@ -103,6 +92,10 @@ func doDump() {
 }
 
 func getPolicy() (string, error) {
+	if *dump_command_policy == "" {
+		return "", nil
+	}
+
 	fd, err := os.Open(*dump_command_policy)
 	if err != nil {
 		return "", err
