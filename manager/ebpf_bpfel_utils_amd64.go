@@ -1,4 +1,4 @@
-//go:build 386 || amd64 || arm || arm64 || loong64 || mips64le || mipsle || ppc64le || riscv64
+//go:build amd64
 
 package manager
 
@@ -9,7 +9,7 @@ import (
 )
 
 func getEbpfBytes() []byte {
-	rb := bytes.NewReader(FileUserspaceEbpfEbpfBpfelO)
+	rb := bytes.NewReader(FileUserspaceEbpfEbpfBpfelAmd64O)
 	r, err := gzip.NewReader(rb)
 	if err != nil {
 		panic(err)

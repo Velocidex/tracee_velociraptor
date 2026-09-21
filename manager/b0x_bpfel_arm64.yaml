@@ -10,7 +10,6 @@ tags: "arm64"
 output: "ab0x_arm64.go"
 custom:
   - files:
-      - "manager/ebpf_bpfel.o"
+      - "manager/ebpf_bpfel_arm64.o"
     base: manager/
     prefix: userspace/ebpf/
-

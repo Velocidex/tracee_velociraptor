@@ -10,6 +10,6 @@ tags: "amd64"
 output: "ab0x_amd64.go"
 custom:
   - files:
-      - "manager/ebpf_bpfel.o"
+      - "manager/ebpf_bpfel_amd64.o"
     base: manager/
     prefix: userspace/ebpf/
