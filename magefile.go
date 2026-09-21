@@ -6,6 +6,7 @@ package main
 import (
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -14,7 +15,84 @@ import (
 	"github.com/magefile/mage/sh"
 )
 
-type Builder struct{}
+type Builder struct {
+	// The object files we built
+	obj      string
+	go_file  string
+	box_file string
+	embed    string
+	cmdline  []string
+}
+
+func (self Builder) generate(env map[string]string) error {
+	closer, err := self.cwd("manager")
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	err = sh.RunWith(env, mg.GoCmd(), self.cmdline...)
+	if err != nil {
+		return err
+	}
+
+	return os.Rename("./ebpf_bpfel.o", filepath.Base(self.obj))
+}
+
+func (self Builder) fixAssets() error {
+	// Remove the go:embed so we can manage accedding the data from fileb0x.
+	replace_string_in_file(self.go_file, `//go:embed `, "//")
+
+	// Decompress the data on demand.
+	replace_string_in_file(self.go_file, `bytes.NewReader(_EbpfBytes)`,
+		`bytes.NewReader(getEbpfBytes())`)
+
+	err := fileb0x(self.box_file)
+	if err != nil {
+		return err
+	}
+
+	// Delay initialization until we are ready.
+	return replace_string_in_file(self.embed, "func init()", "func Init()")
+}
+
+var (
+	arm64BuildSpec = Builder{
+		obj:      "manager/ebpf_bpfel_arm64.o",
+		go_file:  "manager/ebpf_bpfel.go",
+		box_file: "manager/b0x_bpfel_arm64.yaml",
+		embed:    "manager/ab0x_arm64.go",
+		cmdline: []string{"run",
+			"github.com/cilium/ebpf/cmd/bpf2go",
+			"-type", "config_entry_t",
+			"-type", "event_context_t",
+			"-type", "event_config_t",
+			"-no-global-types",
+			"-target", "bpfel",
+			"-go-package", "manager",
+			"ebpf", "../c/tracee.bpf.c",
+			"--", "-I../c/", "-D__TARGET_ARCH_arm64", "-DDEBUG_K",
+		},
+	}
+
+	amd64BuildSpec = Builder{
+		obj:      "manager/ebpf_bpfel_amd64.o",
+		go_file:  "manager/ebpf_bpfel.go",
+		box_file: "manager/b0x_bpfel_amd64.yaml",
+		embed:    "manager/ab0x_amd64.go",
+		cmdline: []string{"run",
+			"github.com/cilium/ebpf/cmd/bpf2go",
+			"-type", "config_entry_t",
+			"-type", "event_context_t",
+			"-type", "event_config_t",
+			"-no-global-types",
+			"-target", "bpfel",
+			"-go-package", "manager",
+			"ebpf", "../c/tracee.bpf.c",
+			"--", "-I../c/", "-D__TARGET_ARCH_x86", "-DDEBUG_K",
+		},
+	}
+)
 
 func (self *Builder) Env() map[string]string {
 	env := make(map[string]string)
@@ -37,6 +115,16 @@ func (self *Builder) cwd(dir string) (func(), error) {
 	}, nil
 }
 
+func getBuilder() Builder {
+	if runtime.GOARCH == "amd64" {
+		return amd64BuildSpec
+	} else if runtime.GOARCH == "arm64" {
+		return arm64BuildSpec
+	} else {
+		panic("Architecture not supported!")
+	}
+}
+
 func (self *Builder) Bin() error {
 	return sh.RunWith(self.Env(), mg.GoCmd(), "build",
 		"-o", "./test",
@@ -52,87 +140,12 @@ func (self *Builder) Race() error {
 }
 
 func (self *Builder) Generate() error {
-	err := self.generate()
+	err := self.generate(self.Env())
 	if err != nil {
 		return err
 	}
 
 	return self.fixAssets()
-}
-
-func (self *Builder) generate() error {
-	closer, err := self.cwd("manager")
-	if err != nil {
-		return err
-	}
-	defer closer()
-
-	if runtime.GOARCH == "amd64" {
-		return sh.RunWith(self.Env(), mg.GoCmd(), "run",
-			"github.com/cilium/ebpf/cmd/bpf2go",
-			"-type", "config_entry_t",
-			"-type", "event_context_t",
-			"-type", "event_config_t",
-			"-no-global-types",
-			"-target", "bpfel",
-			"-go-package", "manager",
-			"ebpf", "../c/tracee.bpf.c",
-			"--", "-I../c/", "-D__TARGET_ARCH_x86", "-DDEBUG_K",
-		)
-
-	} else if runtime.GOARCH == "arm64" {
-		return sh.RunWith(self.Env(), mg.GoCmd(), "run",
-			"github.com/cilium/ebpf/cmd/bpf2go",
-			"-type", "config_entry_t",
-			"-type", "event_context_t",
-			"-type", "event_config_t",
-			"-no-global-types",
-			"-target", "bpfel",
-			"-go-package", "manager",
-			"ebpf", "../c/tracee.bpf.c",
-			"--", "-I../c/", "-D__TARGET_ARCH_arm64", "-DDEBUG_K",
-		)
-
-	} else {
-		panic("Architecture not supported!")
-	}
-
-}
-
-func (self *Builder) fixAssets() error {
-	// We only use little endian for the moment
-	for _, f := range []string{
-		"manager/manager_bpfel.go",
-	} {
-		replace_string_in_file(f, `//go:embed `, "//")
-		replace_string_in_file(f, `bytes.NewReader(_EbpfBytes)`,
-			`bytes.NewReader(getEbpfBytes())`)
-	}
-
-	if runtime.GOARCH == "amd64" {
-		err := fileb0x("manager/b0x_bpfel_amd64.yaml")
-		if err != nil {
-			return err
-		}
-
-		err = replace_string_in_file("manager/ab0x_amd64.go", "func init()", "func Init()")
-		if err != nil {
-			return err
-		}
-
-	} else if runtime.GOARCH == "arm64" {
-		err := fileb0x("manager/b0x_bpfel_arm64.yaml")
-		if err != nil {
-			return err
-		}
-
-		err = replace_string_in_file("manager/ab0x_arm64.go", "func init()", "func Init()")
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // Build ebpf files.
@@ -141,18 +154,17 @@ func (self *Builder) fixAssets() error {
 // check the compiled EBPF module into the tree, so you do not need to
 // rebuild it.
 func Generate() error {
-	builder := Builder{}
-
+	builder := getBuilder()
 	return builder.Generate()
 }
 
 func Bin() error {
-	builder := Builder{}
+	builder := getBuilder()
 	return builder.Bin()
 }
 
 func Race() error {
-	builder := Builder{}
+	builder := getBuilder()
 	return builder.Race()
 }
 

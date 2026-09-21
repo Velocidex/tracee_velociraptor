@@ -108,7 +108,7 @@ type ebpfEventContextT struct {
 
 // loadEbpf returns the embedded CollectionSpec for ebpf.
 func loadEbpf() (*ebpf.CollectionSpec, error) {
-	reader := bytes.NewReader(_EbpfBytes)
+	reader := bytes.NewReader(getEbpfBytes())
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
 	if err != nil {
 		return nil, fmt.Errorf("can't load ebpf: %w", err)
@@ -994,5 +994,5 @@ func _EbpfClose(closers ...io.Closer) error {
 
 // Do not access this directly.
 //
-//go:embed ebpf_bpfel.o
+//ebpf_bpfel.o
 var _EbpfBytes []byte
