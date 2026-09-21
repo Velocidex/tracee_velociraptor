@@ -127,8 +127,7 @@ func getBuilder() Builder {
 
 func (self *Builder) Bin() error {
 	return sh.RunWith(self.Env(), mg.GoCmd(), "build",
-		"-o", "./test",
-		"./userspace/cmd/",
+		"-o", "./ebpf_test", "./userspace/cmd/",
 	)
 }
 

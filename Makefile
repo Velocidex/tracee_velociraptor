@@ -18,7 +18,8 @@ cleanbuild: clean sync bin
 full: clean sync generate bin
 
 load_test:
-	./test load
+	./ebpf_test -h
+	./ebpf_test load
 
 debug:
 	dlv debug "./userspace/cmd/" -- dump --policy ./test_files/test.policy.yaml
